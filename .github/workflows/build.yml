@@ -1,0 +1,85 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # attach firmware to releases on tags
+
+env:
+  # Pins from the esp-mosaico-vibe workspace this app is built and tested with.
+  WORKSPACE_SHA: 1fbf0f704e8a30d2acdc7d4416d5895cfc96dd45
+  IDF_SHA: 7b9cc1ac79f865983f59bb8ff3ff43eb74ff1dbe
+  IDF_TARGET: esp32s31
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Workspace (esp-mosaico-vibe)
+        uses: actions/checkout@v4
+        with:
+          repository: esp-mosaico/esp-mosaico-vibe
+          ref: ${{ env.WORKSPACE_SHA }}
+          path: ws
+          submodules: recursive
+
+      - name: This app
+        uses: actions/checkout@v4
+        with:
+          path: ws/projects/grok_desk_buddy
+
+      - name: Cache ESP-IDF and tools
+        id: idf-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/esp-idf
+            ~/.espressif
+          key: idf-${{ env.IDF_SHA }}-${{ env.IDF_TARGET }}-v1
+
+      - name: ESP-IDF at the pinned SHA
+        if: steps.idf-cache.outputs.cache-hit != 'true'
+        run: |
+          git init -q ~/esp-idf
+          cd ~/esp-idf
+          git remote add origin https://github.com/espressif/esp-idf.git
+          git fetch -q --depth 1 origin "$IDF_SHA"
+          git checkout -q FETCH_HEAD
+          git submodule update -q --init --recursive --depth 1
+          ./install.sh "$IDF_TARGET"
+
+      - name: Build firmware and system-update bundle
+        run: |
+          . ~/esp-idf/export.sh > /dev/null
+          cd ws/projects/grok_desk_buddy
+          idf.py -B build build
+          idf.py -B build system-update-bundle
+          ls -l build/*.irisfw build/grok_desk_buddy.bin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: grok_desk_buddy-firmware
+          path: |
+            ws/projects/grok_desk_buddy/build/grok_desk_buddy-system-update.irisfw
+            ws/projects/grok_desk_buddy/build/grok_desk_buddy.bin
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ws/projects/grok_desk_buddy/build/grok_desk_buddy-system-update.irisfw
+          body: |
+            Prebuilt firmware for the ESP-Mosaico (generic names; no secrets,
+            relay or wake-word model built in, so it runs tap-to-talk with an
+            xAI key set in Vibe Mode → Settings → Shared information as `xai_api_key`).
+
+            Install from an esp-mosaico-vibe workspace with the board in Vibe Mode:
+
+                python mosaico.py iris system-update --project projects/grok_desk_buddy \
+                  --bundle grok_desk_buddy-system-update.irisfw
