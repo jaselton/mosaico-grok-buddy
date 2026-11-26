@@ -30,6 +30,9 @@ void app_alarm_format_now(char *out, size_t len);
  * Writes a spoken confirmation (e.g. "6:30 AM tomorrow") to out. */
 esp_err_t app_alarm_set(int hour, int minute, const char *label, char *out, size_t len);
 
+/** Set a one-shot alarm `seconds` from now (1 s .. 24 h); spoken confirmation in out. */
+esp_err_t app_alarm_set_in(int seconds, const char *label, char *out, size_t len);
+
 /** Cancel every pending alarm; returns how many were cancelled. */
 int app_alarm_cancel_all(void);
 

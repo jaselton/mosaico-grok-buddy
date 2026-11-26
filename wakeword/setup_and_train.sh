@@ -9,7 +9,8 @@ fi
 source .venv/bin/activate
 python -m pip install -q --upgrade pip wheel
 if [[ ! -f .deps_done ]]; then
-  pip install -q 'git+https://github.com/puddly/pymicro-features@puddly/minimum-cpp-version'
+  # pymicro-features >= 2 has macOS wheels and the process_samples API microWakeWord uses.
+  pip install -q 'pymicro-features>=2.0.2'
   pip install -q 'git+https://github.com/whatsnowplaying/audio-metadata@d4ebb238e6a401bb1a5aaaac60c9e2b3cb30929f'
   [[ -d microWakeWord ]] || git clone -q https://github.com/kahrendt/microWakeWord
   pip install -q -e ./microWakeWord

@@ -67,12 +67,19 @@ if not Path("audioset_16k/.done").exists():
         sh("curl -L --fail -o audioset/09.parquet "
            "https://huggingface.co/datasets/agkphysics/AudioSet/resolve/main/data/bal_train/09.parquet")
     Path("audioset_16k").mkdir(exist_ok=True)
-    ds = datasets.load_dataset("parquet", data_files=str(shard), split="train")
-    audio_col = next(c for c, f in ds.features.items() if isinstance(f, datasets.Audio))
-    ds = ds.cast_column(audio_col, datasets.Audio(sampling_rate=16000))
-    for i, row in enumerate(tqdm(ds)):
+    # Read the parquet directly: its metadata uses datasets 4.x feature types.
+    import io
+    import librosa
+    import pyarrow.parquet as pq
+    import soundfile as sf
+    table = pq.read_table(shard, columns=["audio"])
+    for i, cell in enumerate(tqdm(table.column("audio").to_pylist())):
         try:
-            write16k(f"audioset_16k/as_{i:05d}.wav", row[audio_col]["array"])
+            data, sr = sf.read(io.BytesIO(cell["bytes"]), dtype="float32", always_2d=True)
+            mono = data.mean(axis=1)
+            if sr != 16000:
+                mono = librosa.resample(mono, orig_sr=sr, target_sr=16000)
+            write16k(f"audioset_16k/as_{i:05d}.wav", mono)
         except Exception as e:  # a few clips fail to decode; skip them
             print("skip", i, e)
     Path("audioset_16k/.done").touch()
@@ -84,10 +91,13 @@ if not Path("fma_16k/.done").exists():
            "https://huggingface.co/datasets/mchl914/fma_xsmall/resolve/main/fma_xs.zip")
         sh("cd fma && unzip -q fma_xs.zip && rm fma_xs.zip")
     Path("fma_16k").mkdir(exist_ok=True)
-    ds = datasets.Dataset.from_dict({"audio": [str(p) for p in Path("fma/fma_small").glob("**/*.mp3")]})
-    ds = ds.cast_column("audio", datasets.Audio(sampling_rate=16000))
-    for row in tqdm(ds):
-        write16k(f"fma_16k/{Path(row['audio']['path']).stem}.wav", row["audio"]["array"])
+    import librosa
+    for i, mp3 in enumerate(tqdm(sorted(Path("fma/fma_small").glob("**/*.mp3")))):
+        try:
+            mono, _ = librosa.load(str(mp3), sr=16000, mono=True)
+            write16k(f"fma_16k/{mp3.stem}.wav", mono)
+        except Exception as e:
+            print("skip", mp3.name, e)
     Path("fma_16k/.done").touch()
 
 # ---- 3. augmented positive features ----------------------------------------

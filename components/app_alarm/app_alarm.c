@@ -6,6 +6,9 @@
  * reboot; one that came due while the board was off rings on boot only if
  * it is less than 10 minutes late. A ringing alarm stops on dismiss or after
  * RING_MAX_S, and reports start/stop through the callback.
+ *
+ * Flash writes need an internal-RAM stack, so only the alarm task (internal
+ * stack) writes NVS; callers on other tasks just mark the list dirty.
  */
 #include "app_alarm.h"
 
@@ -43,6 +46,7 @@ static struct {
     void *ctx;
     atomic_bool ringing;
     atomic_bool dismiss;
+    atomic_bool dirty;      /* list changed; the alarm task persists it */
     char ring_label[APP_ALARM_LABEL_MAX];
 } a;
 
@@ -77,14 +81,16 @@ bool app_alarm_time_valid(void)
 void app_alarm_format_now(char *out, size_t len)
 {
     if (!app_alarm_time_valid()) {
-        snprintf(out, len, "unknown (clock not set yet)");
+        snprintf(out, len, "not synced yet (the device just started; it takes a few seconds)");
         return;
     }
     time_t now = time(NULL);
     struct tm t;
     localtime_r(&now, &t);
-    strftime(out, len, "%A, %B %d, %I:%M %p", &t);
+    strftime(out, len, "%A, %B %d, %I:%M:%S %p", &t);
 }
+
+static esp_err_t store(time_t when, const char *label);
 
 static void describe(time_t when, char *out, size_t len)
 {
@@ -93,7 +99,7 @@ static void describe(time_t when, char *out, size_t len)
     localtime_r(&when, &tw);
     localtime_r(&now, &tn);
     char hm[16];
-    strftime(hm, sizeof(hm), "%I:%M %p", &tw);
+    strftime(hm, sizeof(hm), tw.tm_sec ? "%I:%M:%S %p" : "%I:%M %p", &tw);
     const char *p = hm[0] == '0' ? hm + 1 : hm;   /* "06:30" -> "6:30" */
     const bool today = tw.tm_yday == tn.tm_yday && tw.tm_year == tn.tm_year;
     snprintf(out, len, "%s %s", p, today ? "today" : "tomorrow");
@@ -120,6 +126,33 @@ esp_err_t app_alarm_set(int hour, int minute, const char *label, char *out, size
         t.tm_isdst = -1;
         when = mktime(&t);
     }
+    const esp_err_t err = store(when, label);
+    if (err == ESP_OK) {
+        describe(when, out, len);
+        ESP_LOGI(TAG, "alarm set for %s", out);
+    }
+    return err;
+}
+
+esp_err_t app_alarm_set_in(int seconds, const char *label, char *out, size_t len)
+{
+    if (seconds < 1 || seconds > 24 * 3600) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!app_alarm_time_valid()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const time_t when = time(NULL) + seconds;
+    const esp_err_t err = store(when, label);
+    if (err == ESP_OK) {
+        describe(when, out, len);
+        ESP_LOGI(TAG, "alarm set for %s (in %d s)", out, seconds);
+    }
+    return err;
+}
+
+static esp_err_t store(time_t when, const char *label)
+{
     xSemaphoreTake(a.lock, portMAX_DELAY);
     int slot = -1;
     for (int i = 0; i < APP_ALARM_MAX; ++i) {
@@ -134,10 +167,8 @@ esp_err_t app_alarm_set(int hour, int minute, const char *label, char *out, size
     }
     a.alarms[slot].when = when;
     snprintf(a.alarms[slot].label, sizeof(a.alarms[slot].label), "%s", label ? label : "");
-    save();
+    atomic_store(&a.dirty, true);
     xSemaphoreGive(a.lock);
-    describe(when, out, len);
-    ESP_LOGI(TAG, "alarm set for %s", out);
     return ESP_OK;
 }
 
@@ -149,7 +180,7 @@ int app_alarm_cancel_all(void)
         n += a.alarms[i].when != 0;
     }
     memset(a.alarms, 0, sizeof(a.alarms));
-    save();
+    atomic_store(&a.dirty, true);
     xSemaphoreGive(a.lock);
     return n;
 }
@@ -175,6 +206,11 @@ static void alarm_task(void *arg)
     int64_t ring_started = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        if (atomic_exchange(&a.dirty, false)) {
+            xSemaphoreTake(a.lock, portMAX_DELAY);
+            save();
+            xSemaphoreGive(a.lock);
+        }
         if (!app_alarm_time_valid()) {
             continue;
         }
@@ -252,7 +288,7 @@ esp_err_t app_alarm_start(app_alarm_ring_cb_t cb, void *ctx)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "SNTP init failed: %s", esp_err_to_name(err));
     }
-    if (xTaskCreateWithCaps(alarm_task, "alarm", 3072, NULL, 3, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
+    if (xTaskCreate(alarm_task, "alarm", 3584, NULL, 3, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;

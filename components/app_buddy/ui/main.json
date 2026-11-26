@@ -19,6 +19,7 @@
       "name": "tap",
       "callback": "tap",
       "events": [
+        {"event": "click", "action": "call", "arg": 0},
         {"event": "long", "action": "call", "arg": 1}
       ]
     },

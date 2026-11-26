@@ -12,6 +12,14 @@
 #include <stdlib.h>
 
 #include "bundle_gsp.h"
+#ifdef ESP_PLATFORM
+#include "esp_log.h"
+static const char *TAG = "app_buddy";
+#define BUDDY_LOG(...) ESP_LOGI(TAG, __VA_ARGS__)
+#else
+#include <stdio.h>
+#define BUDDY_LOG(...) (printf(__VA_ARGS__), printf("\n"))
+#endif
 
 #define TICK_MS 33
 #define FRAME_COUNT 5            /* open, think, b1, b2, b3 */
@@ -451,6 +459,7 @@ static void on_event(esp_gsp_handle_t ui, const esp_gsp_event_t *event, void *ct
     if (!gsp_buddy_event_is_tap(event)) {
         return;
     }
+    BUDDY_LOG("touch: %s", event->arg == 1 ? "long press (pet)" : "tap");
     if (event->arg == 1) {   /* authored long-press call: petting */
         s->ignore_tap_until_ms = s->t_ms + 800;
         atomic_store(&s->pending_react, APP_BUDDY_REACT_HAPPY);

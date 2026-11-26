@@ -77,9 +77,10 @@ static const char *TAG = "app_voice";
     "and that it needs them in the app. Don't add new information.]\n\n"
 
 #define ALARM_INSTRUCTIONS                                                          \
-    " You can set wake-up alarms on this device: when asked, call set_alarm with "  \
-    "the local time in 24-hour HH:MM (and a short label if one was given); call "   \
-    "cancel_alarms to clear them. Confirm briefly using the time the tool returns."
+    " You can set alarms and timers on this device with set_alarm: pass `time` "     \
+    "(local 24-hour HH:MM) for a clock time, or `in_seconds` for anything relative " \
+    "(\"in 10 minutes\" = 600). Add a short label if one was given. cancel_alarms "  \
+    "clears them. Confirm briefly using the time the tool returns."
 
 #define GREETING_PREFIX                                                             \
     "[" OWNER "'s alarm just rang and they switched it off. Greet them in one short, " \
@@ -567,18 +568,21 @@ static void send_session_update(void)
         cJSON *t = cJSON_CreateObject();
         cJSON_AddStringToObject(t, "type", "function");
         cJSON_AddStringToObject(t, "name", "set_alarm");
-        cJSON_AddStringToObject(t, "description", "Set a one-shot wake-up alarm on this device at the next "
-                                                  "occurrence of a local time.");
+        cJSON_AddStringToObject(t, "description", "Set a one-shot alarm or timer on this device: either "
+                                                  "`time` (next occurrence of a local clock time) or "
+                                                  "`in_seconds` (relative).");
         cJSON *params = cJSON_AddObjectToObject(t, "parameters");
         cJSON_AddStringToObject(params, "type", "object");
         cJSON *props = cJSON_AddObjectToObject(params, "properties");
         cJSON *time_p = cJSON_AddObjectToObject(props, "time");
         cJSON_AddStringToObject(time_p, "type", "string");
-        cJSON_AddStringToObject(time_p, "description", "Local time, 24-hour HH:MM, e.g. 06:30");
+        cJSON_AddStringToObject(time_p, "description", "Local clock time, 24-hour HH:MM, e.g. 06:30");
+        cJSON *in_p = cJSON_AddObjectToObject(props, "in_seconds");
+        cJSON_AddStringToObject(in_p, "type", "integer");
+        cJSON_AddStringToObject(in_p, "description", "Ring this many seconds from now (relative alarms/timers)");
         cJSON *label = cJSON_AddObjectToObject(props, "label");
         cJSON_AddStringToObject(label, "type", "string");
         cJSON_AddStringToObject(label, "description", "Optional short label, e.g. gym");
-        cJSON_AddItemToArray(cJSON_AddArrayToObject(params, "required"), cJSON_CreateString("time"));
         cJSON_AddItemToArray(tools, t);
         cJSON *c = cJSON_CreateObject();
         cJSON_AddStringToObject(c, "type", "function");
@@ -751,21 +755,24 @@ static void on_event(const msg_t *m)
             } else {
                 cJSON *a = cJSON_Parse(nl + 1);
                 const cJSON *tm = a ? cJSON_GetObjectItemCaseSensitive(a, "time") : NULL;
+                const cJSON *in = a ? cJSON_GetObjectItemCaseSensitive(a, "in_seconds") : NULL;
                 const cJSON *lb = a ? cJSON_GetObjectItemCaseSensitive(a, "label") : NULL;
+                const char *label = cJSON_IsString(lb) ? lb->valuestring : "";
                 int hh = -1, mm = -1;
                 char when[48] = "";
-                if (cJSON_IsString(tm) && sscanf(tm->valuestring, "%d:%d", &hh, &mm) == 2) {
-                    const esp_err_t e = app_alarm_set(hh, mm, cJSON_IsString(lb) ? lb->valuestring : "",
-                                                      when, sizeof(when));
+                const bool rel = cJSON_IsNumber(in);
+                if (rel || (cJSON_IsString(tm) && sscanf(tm->valuestring, "%d:%d", &hh, &mm) == 2)) {
+                    const esp_err_t e = rel ? app_alarm_set_in((int)in->valuedouble, label, when, sizeof(when))
+                                            : app_alarm_set(hh, mm, label, when, sizeof(when));
                     if (e == ESP_OK) {
                         snprintf(out, sizeof(out), "{\"status\":\"set\",\"rings\":\"%s\"}", when);
                     } else {
                         snprintf(out, sizeof(out), "{\"status\":\"failed\",\"reason\":\"%s\"}",
-                                 e == ESP_ERR_INVALID_STATE ? "clock not set yet" :
+                                 e == ESP_ERR_INVALID_STATE ? "clock still syncing; try again in a few seconds" :
                                  e == ESP_ERR_NO_MEM ? "too many alarms (max 4)" : "bad time");
                     }
                 } else {
-                    snprintf(out, sizeof(out), "{\"status\":\"failed\",\"reason\":\"time must be HH:MM\"}");
+                    snprintf(out, sizeof(out), "{\"status\":\"failed\",\"reason\":\"give time as HH:MM or in_seconds\"}");
                 }
                 cJSON_Delete(a);
             }
