@@ -41,9 +41,14 @@ _Static_assert(CODEC_RATE == 2 * VOICE_DOWNLINK_RATE, "playback upsamples 24k ->
 /* Jitter buffer: start (or resume after running dry) only once this much audio
  * is queued, or once the oldest queued audio has waited JITTER_MAX_WAIT_MS
  * (so a short tail still plays). Prevents choppy speech on network jitter. */
-#define JITTER_START_MS    300
-#define JITTER_MAX_WAIT_MS 400
+#define JITTER_START_MS    500    /* initial fill before speaking */
+#define JITTER_RESUME_MS   400    /* refill after running dry mid-reply */
+#define JITTER_MAX_WAIT_MS 700    /* a short tail still plays after this long */
 #define JITTER_START_BYTES (VOICE_DOWNLINK_RATE * 2 * JITTER_START_MS / 1000)
+#define JITTER_RESUME_BYTES (VOICE_DOWNLINK_RATE * 2 * JITTER_RESUME_MS / 1000)
+
+/* Playback diagnostics for the current reply (reset when playback goes idle). */
+static atomic_int s_underruns;
 
 /* 2x interpolation FIR: Blackman-windowed sinc, cutoff 11 kHz at 48 kHz. */
 #define UPS_TAPS   48                 /* even: 24 per polyphase branch */
@@ -224,6 +229,8 @@ static void playback_task(void *arg)
     static int16_t in[DOWN_SAMPLES];
     static int16_t out[CODEC_FRAMES * CODEC_CHANNELS];
     bool streaming = false;       /* false while (re)filling the jitter buffer */
+    bool mid_reply = false;       /* ran dry during a reply: use the resume threshold */
+    int64_t last_audio_us = 0;
     int64_t waiting_since_us = 0; /* when queued audio was first seen while not streaming */
     for (;;) {
         if (atomic_exchange(&s_flush, false)) {
@@ -240,6 +247,17 @@ static void playback_task(void *arg)
         if (!streaming) {
             const size_t avail = xStreamBufferBytesAvailable(s_playback);
             if (!avail) {
+                /* Quiet for over a second: the reply is over. The final run-dry is
+                 * the normal end, so only earlier ones were audible gaps. */
+                if (mid_reply && esp_timer_get_time() - last_audio_us > 1000LL * 1000) {
+                    const int gaps = atomic_exchange(&s_underruns, 0) - 1;
+                    if (gaps > 0) {
+                        ESP_LOGW(TAG, "reply had %d playback gap(s): audio arrived slower than real time", gaps);
+                    } else {
+                        ESP_LOGI(TAG, "reply played without gaps");
+                    }
+                    mid_reply = false;
+                }
                 waiting_since_us = 0;
                 vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
@@ -248,7 +266,8 @@ static void playback_task(void *arg)
             if (!waiting_since_us) {
                 waiting_since_us = now;
             }
-            if (avail < JITTER_START_BYTES && now - waiting_since_us < (int64_t)JITTER_MAX_WAIT_MS * 1000) {
+            const size_t need = mid_reply ? JITTER_RESUME_BYTES : JITTER_START_BYTES;
+            if (avail < need && now - waiting_since_us < (int64_t)JITTER_MAX_WAIT_MS * 1000) {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
             }
@@ -257,14 +276,20 @@ static void playback_task(void *arg)
         }
         const size_t got = xStreamBufferReceive(s_playback, in, sizeof(in), pdMS_TO_TICKS(40));
         if (got < sizeof(int16_t)) {
-            /* Ran dry: refill the jitter buffer before resuming. */
+            /* Ran dry: refill the jitter buffer before resuming. If audio stops for
+             * over a second the reply is over; report and reset the diagnostics. */
             streaming = false;
+            if (last_audio_us) {
+                atomic_fetch_add(&s_underruns, 1);
+                mid_reply = true;
+            }
             if (atomic_exchange(&s_playing, false) && s_level_cb) {
                 s_level_cb(0, s_level_ctx);
             }
             continue;
         }
         atomic_store(&s_playing, true);
+        last_audio_us = esp_timer_get_time();
         const size_t n = got / sizeof(int16_t);
         if (s_level_cb) {
             s_level_cb(level_from_pcm(in, n), s_level_ctx);

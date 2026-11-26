@@ -45,7 +45,7 @@ static const char *TAG = "app_voice";
 #define VOICE_ID_MAX   32
 #define RX_MAX         (512 * 1024)      /* largest reassembled server message */
 #define UPLINK_CHUNK   (VOICE_UPLINK_RATE * 2 / 10)   /* 100 ms of PCM16 */
-#define LISTEN_NO_SPEECH_MS 5000
+#define LISTEN_NO_SPEECH_MS 5000   /* counted from when listening starts */
 #define LISTEN_MAX_MS  30000
 #define THINK_MAX_MS   20000
 #define CONNECT_MAX_MS 10000
@@ -683,7 +683,8 @@ static void announce_next_if_ready(void)
     char *text = s.announce[0];
     memmove(&s.announce[0], &s.announce[1], sizeof(s.announce[0]) * (MAX_ANNOUNCE - 1));
     s.announce[--s.announce_count] = NULL;
-    ESP_LOGI(TAG, "announcing %s answer", BOT_NAME);
+    ESP_LOGI(TAG, "announcing %s", text[0] == ATTN_MARK ? "bot attention notice"
+                                 : text[0] == GREET_MARK ? "alarm greeting" : "bot answer");
     speak_announcement(text);
     heap_caps_free(text);
 }
