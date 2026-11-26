@@ -20,6 +20,7 @@ import threading
 import time
 
 PROJECT = "projects/grok_desk_buddy"
+FIRE_AT = 0.90   # replaced by --cutoff
 POSITIVES = ["Hey Grok", "Hey, Grok.", "Hey Grok!"]
 NEGATIVES = ["Hey Greg", "Hey Google", "OK Grok", "Hey Brock", "Hey Rock", "Grok",
              "Hey group", "Great job", "Hey, good morning",
@@ -29,7 +30,7 @@ NEGATIVES = ["Hey Greg", "Hey Google", "OK Grok", "Hey Brock", "Hey Rock", "Grok
 VOICES = ["Samantha", "Daniel", "Karen", "Moira", "Rishi", "Fred",
           "Eddy (English (US))", "Flo (English (US))", "Reed (English (US))", "Sandy (English (US))"]
 RATES = [150, 185]
-SCORE = re.compile(r"app_wake: (wake word|near miss) \((?:score|peak) ([0-9.]+)")
+SCORE = re.compile(r"app_wake: (wake word|near miss|peak) \((?:score|peak) ([0-9.]+)")
 
 
 def rpc(method, payload=""):
@@ -79,17 +80,21 @@ def trial(log, text, voice, rate, device):
     time.sleep(2.2)   # model window + log latency
     ev = log.since(t0)
     best = max((e[2] for e in ev), default=0.0)
-    fired = any(e[1] == "wake word" for e in ev)
+    # Test mode logs each event's peak; "fired" means the peak reached the
+    # board's current cutoff (the real-use threshold, set below).
+    fired = best >= FIRE_AT
     return fired, best
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", default="Studio Display Speakers", help="macOS output for `say -a`")
-    ap.add_argument("--probe-cutoff", default="0.50", help="low cutoff used while measuring")
+    ap.add_argument("--cutoff", type=float, default=0.90, help="threshold whose hit/false rate is shown per line")
     ap.add_argument("--negatives-per-voice", type=int, default=4)
     args = ap.parse_args()
 
+    global FIRE_AT
+    FIRE_AT = args.cutoff
     voices = available_voices()
     if not voices:
         sys.exit("none of the listed voices are installed")
@@ -98,7 +103,6 @@ def main():
     log.start()
     time.sleep(3)
     print("board:", rpc(2, "1"))                     # test mode: log only
-    print("board:", rpc(1, args.probe_cutoff))
     rpc(4)
 
     pos, neg = [], []

@@ -5,6 +5,7 @@
 //   GET  /results  device polls; returns undelivered results once, then marks them delivered
 //   GET  /voice    device WebSocket, proxied to xAI realtime with the key (see voice.js)
 //   GET  /usage    device: voice minutes used per day and the daily limit
+//   GET  /team-usage device: team spend summary via the Management API (usage.js)
 //   GET  /health   open liveness check (no data)
 //
 // Secrets (wrangler secret put): DEVICE_TOKEN, BOT_TOKEN, XAI_API_KEY,
@@ -14,6 +15,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { dailyLimitSeconds, handleVoice } from "./voice.js";
+import { teamUsage } from "./usage.js";
 
 const MAX_TASK_CHARS = 2000;
 const MAX_RESULT_CHARS = 2000;
@@ -74,6 +76,11 @@ export default {
       const usd = Object.fromEntries(Object.entries(u.minutes_used).map(([d, m]) => [d, +(m * rate).toFixed(2)]));
       return json({ ok: true, daily_limit_minutes: +limitMin.toFixed(1),
                     daily_limit_usd: +(limitMin * rate).toFixed(2), ...u, est_usd: usd });
+    }
+
+    if (url.pathname === "/team-usage" && req.method === "GET") {
+      if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
+      return json(await teamUsage(env, url.searchParams.get("debug") === "1"));
     }
 
     if (url.pathname === "/task" && req.method === "POST") {

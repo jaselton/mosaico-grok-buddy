@@ -57,6 +57,25 @@ esp_gsp_err_t app_buddy_request_state(app_buddy_handle_t handle, app_buddy_state
  * Until first called, the bars use a synthetic speech envelope. */
 void app_buddy_set_level(app_buddy_handle_t handle, uint8_t level);
 
+/** Expressions shown while speaking (from the words Grok is saying). */
+typedef enum {
+    APP_BUDDY_EXPR_NONE = 0,
+    APP_BUDDY_EXPR_HAPPY,
+    APP_BUDDY_EXPR_LAUGH,
+    APP_BUDDY_EXPR_SURPRISED,
+    APP_BUDDY_EXPR_CURIOUS,
+    APP_BUDDY_EXPR_SAD,
+    APP_BUDDY_EXPR_SKEPTICAL,
+    APP_BUDDY_EXPR_LOVE,
+} app_buddy_expr_t;
+
+/** Show an expression for ~2.5 s from any task (visible while speaking). */
+void app_buddy_express(app_buddy_handle_t handle, app_buddy_expr_t expr);
+
+/** Room sound level (0..255) from any task, ~50 Hz while idle: drives perk-up,
+ * startle on a sudden bang, and drowsiness after a long quiet spell. */
+void app_buddy_set_ambient(app_buddy_handle_t handle, uint8_t level);
+
 /** Play a short reaction from any task (shown while the face is idle). */
 void app_buddy_react(app_buddy_handle_t handle, app_buddy_reaction_t reaction);
 

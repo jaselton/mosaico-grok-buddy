@@ -161,6 +161,8 @@ static atomic_bool s_capturing;
 static atomic_bool s_flush;
 static atomic_bool s_playing;
 static voice_level_cb_t s_level_cb;
+static voice_level_cb_t s_ambient_cb;
+static void *s_ambient_ctx;
 static void *s_level_ctx;
 
 static uint8_t level_from_pcm(const int16_t *pcm, size_t n)
@@ -214,6 +216,9 @@ static void capture_task(void *arg)
             out[i] = (int16_t)(acc / 3);
         }
         app_wake_feed(out, UP_SAMPLES);   /* no-op without a model or while paused */
+        if (s_ambient_cb && !atomic_load(&s_capturing) && !atomic_load(&s_playing)) {
+            s_ambient_cb(level_from_pcm(out, UP_SAMPLES), s_ambient_ctx);
+        }
         if (atomic_load(&s_capturing)) {
             xStreamBufferSend(s_capture, out, sizeof(out), 0);
             if (s_level_cb && !atomic_load(&s_playing)) {
@@ -346,6 +351,12 @@ esp_err_t voice_audio_start(voice_level_cb_t level_cb, void *ctx)
     ESP_LOGI(TAG, "audio ready: codec %d Hz x%d, uplink %d Hz, downlink %d Hz", CODEC_RATE,
              CODEC_CHANNELS, VOICE_UPLINK_RATE, VOICE_DOWNLINK_RATE);
     return ESP_OK;
+}
+
+void voice_audio_set_ambient_cb(voice_level_cb_t cb, void *ctx)
+{
+    s_ambient_ctx = ctx;
+    s_ambient_cb = cb;
 }
 
 void voice_audio_capture_begin(void)

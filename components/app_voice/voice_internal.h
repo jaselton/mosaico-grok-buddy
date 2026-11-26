@@ -25,6 +25,8 @@ typedef void (*voice_level_cb_t)(uint8_t level, void *ctx);
 
 /** Open the codec and start the capture and playback tasks. */
 esp_err_t voice_audio_start(voice_level_cb_t level_cb, void *ctx);
+/** Room level (0..255) every 20 ms while not capturing or playing; NULL to stop. */
+void voice_audio_set_ambient_cb(voice_level_cb_t cb, void *ctx);
 /** Begin buffering 16 kHz mic audio for the uplink (clears stale audio). */
 void voice_audio_capture_begin(void);
 /** Stop buffering mic audio. */

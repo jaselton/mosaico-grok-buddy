@@ -43,7 +43,7 @@ constexpr float kFeatureScale = 0.0390625f;     /* pymicro-features FLOAT32_SCAL
 constexpr size_t kArenaBytes = 96 * 1024;
 constexpr size_t kVarArenaBytes = 2 * 1024;
 constexpr int kWindow = 5;                      /* scores averaged */
-constexpr float kDefaultCutoff = 0.90f;         /* adjustable over USB, see rpc_* below */
+constexpr float kDefaultCutoff = 0.80f;         /* adjustable over USB, see rpc_* below */
 constexpr float kNearMissFloor = 0.40f;         /* peaks above this are logged */
 /* USB tuning service (mosaico.py iris rpc 18263 <method> --payload ...):
  *   1 set cutoff ("0.85")   2 test mode ("1"/"0": log only, no conversation)
@@ -206,6 +206,22 @@ void wake_task(void *)
             }
             mean /= kWindow;
             const float cutoff = w.cutoff.load();
+            if (w.test_mode.load()) {
+                /* Test mode: never fire; log each event's true peak when it ends, so
+                 * thresholds can be chosen from real peaks (see speaker_test.py). */
+                if (mean > peak) {
+                    peak = mean;
+                } else if (peak >= 0.2f && mean < peak * 0.5f) {
+                    ESP_LOGI(TAG, "peak (score %.2f, cutoff %.2f)%s", peak, cutoff, peak >= cutoff ? " would fire" : "");
+                    if (peak >= cutoff) {
+                        w.detections++;
+                    } else {
+                        w.near_misses++;
+                    }
+                    peak = 0;
+                }
+                continue;
+            }
             if (mean >= cutoff && xTaskGetTickCount() >= refractory_until && w.enabled.load()) {
                 w.detections++;
                 ESP_LOGI(TAG, "wake word (score %.2f, cutoff %.2f)%s", mean, cutoff,

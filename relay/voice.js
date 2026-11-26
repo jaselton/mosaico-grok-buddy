@@ -11,6 +11,87 @@
 
 const BUDGET_CLOSE_CODE = 4002;
 
+// Relay-side tools: answered here, never forwarded to the device. Location comes
+// from Cloudflare's geolocation of the device's public IP (its Wi-Fi network),
+// so weather and local time follow the buddy without any setup.
+const RELAY_TOOLS = [
+  {
+    type: "function",
+    name: "get_weather",
+    description: "Current weather and today's forecast where the device is (its Wi-Fi location).",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    type: "function",
+    name: "get_location",
+    description: "Where the device is (city, region, country), its time zone and the current local time.",
+    parameters: { type: "object", properties: {} },
+  },
+];
+
+function placeOf(cf) {
+  const parts = [cf?.city, cf?.region, cf?.country].filter(Boolean);
+  return {
+    place: parts.join(", ") || "unknown",
+    lat: Number(cf?.latitude),
+    lon: Number(cf?.longitude),
+    tz: cf?.timezone || "UTC",
+    us: cf?.country === "US",
+  };
+}
+
+function localTime(tz) {
+  return new Date().toLocaleString("en-US", {
+    timeZone: tz, weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+}
+
+const WMO = (c) => c === 0 ? "clear" : c <= 2 ? "partly cloudy" : c === 3 ? "overcast" : c <= 48 ? "foggy"
+  : c <= 57 ? "drizzle" : c <= 67 ? "rain" : c <= 77 ? "snow" : c <= 82 ? "rain showers" : c <= 86 ? "snow showers" : "thunderstorms";
+
+async function weather(loc) {
+  if (!Number.isFinite(loc.lat) || !Number.isFinite(loc.lon)) return { error: "location unknown" };
+  const f = loc.us ? "fahrenheit" : "celsius";
+  const w = loc.us ? "mph" : "kmh";
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
+    `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m` +
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code` +
+    `&temperature_unit=${f}&wind_speed_unit=${w}&timezone=auto&forecast_days=1`;
+  try {
+    const j = await (await fetch(url)).json();
+    const unit = loc.us ? "°F" : "°C";
+    return {
+      place: loc.place,
+      now: `${Math.round(j.current.temperature_2m)}${unit}, feels like ${Math.round(j.current.apparent_temperature)}${unit}, ${WMO(j.current.weather_code)}, wind ${Math.round(j.current.wind_speed_10m)} ${w}`,
+      today: `high ${Math.round(j.daily.temperature_2m_max[0])}${unit}, low ${Math.round(j.daily.temperature_2m_min[0])}${unit}, ${WMO(j.daily.weather_code[0])}, ${j.daily.precipitation_probability_max[0]}% chance of precipitation`,
+    };
+  } catch {
+    return { error: "weather unavailable" };
+  }
+}
+
+async function runRelayTool(name, loc) {
+  if (name === "get_weather") return weather(loc);
+  if (name === "get_location") return { place: loc.place, time_zone: loc.tz, local_time: localTime(loc.tz) };
+  return null;
+}
+
+/* Device -> xAI: add relay tools and location context to session.update. */
+function rewriteFromDevice(data, loc) {
+  if (typeof data !== "string" || !data.startsWith('{"type":"session.update"')) return data;
+  try {
+    const m = JSON.parse(data);
+    const ss = m.session || (m.session = {});
+    ss.tools = [...(ss.tools || []), ...RELAY_TOOLS];
+    ss.instructions = (ss.instructions || "") +
+      ` The device is in ${loc.place} (time zone ${loc.tz}); local time there is ${localTime(loc.tz)}.` +
+      " For weather or location questions call get_weather or get_location.";
+    return JSON.stringify(m);
+  } catch {
+    return data;
+  }
+}
+
 // Daily voice budget: the lower of DAILY_MINUTES and DAILY_USD at USD_PER_MINUTE.
 export function dailyLimitSeconds(env) {
   const byMinutes = Number(env.DAILY_MINUTES || "20") * 60;
@@ -91,8 +172,33 @@ export async function handleVoice(req, env, ctx, stub) {
     finish("budget");
   }, Math.min(maxSessionSec, left) * 1000);
 
-  dev.addEventListener("message", (e) => safeSend(upstream, e.data));
-  upstream.addEventListener("message", (e) => safeSend(dev, e.data));
+  const loc = placeOf(req.cf);
+  let swallowDone = false;   // hide the tool-call turn's response.done from the device
+  dev.addEventListener("message", (e) => safeSend(upstream, rewriteFromDevice(e.data, loc)));
+  upstream.addEventListener("message", async (e) => {
+    const d = e.data;
+    // Only tool-call messages are inspected; audio deltas pass straight through.
+    if (typeof d === "string" && d.includes('"response.function_call_arguments.done"')) {
+      try {
+        const m = JSON.parse(d);
+        if (RELAY_TOOLS.some((t) => t.name === m.name)) {
+          const out = await runRelayTool(m.name, loc);
+          safeSend(upstream, JSON.stringify({
+            type: "conversation.item.create",
+            item: { type: "function_call_output", call_id: m.call_id, output: JSON.stringify(out) },
+          }));
+          safeSend(upstream, JSON.stringify({ type: "response.create" }));
+          swallowDone = true;
+          return;   // handled here; the device never sees it
+        }
+      } catch { /* fall through and forward */ }
+    }
+    if (swallowDone && typeof d === "string" && d.includes('"type":"response.done"')) {
+      swallowDone = false;   // the spoken follow-up gets its own response.done
+      return;
+    }
+    safeSend(dev, d);
+  });
   dev.addEventListener("close", () => finish("device_closed"));
   dev.addEventListener("error", () => finish("device_error"));
   upstream.addEventListener("close", () => finish("upstream_closed"));

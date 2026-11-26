@@ -15,9 +15,11 @@
  */
 #include "app_voice.h"
 
+#include <ctype.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "app_alarm.h"
 #include "app_config.h"
@@ -83,8 +85,15 @@ static const char *TAG = "app_voice";
     "clears them. Confirm briefly using the time the tool returns."
 
 #define GREETING_PREFIX                                                             \
-    "[" OWNER "'s alarm just rang and they switched it off. Greet them in one short, " \
-    "warm, upbeat sentence; mention the alarm label if there is one.]\n\n"
+    "[" OWNER "'s alarm just rang and they switched it off. Greet them warmly; if it " \
+    "is morning, give a quick briefing: today's date and, after calling get_weather, " \
+    "today's weather in one sentence. Mention the alarm label if there is one. Keep it " \
+    "to two or three short sentences.]\n\n"
+
+#define BRIEFING_TASK                                                               \
+    "Morning briefing for " OWNER ", who just woke up (their alarm rang). In two or "  \
+    "three short spoken sentences: their first meetings or commitments today and "    \
+    "anything urgent waiting on them. No lists, no URLs."
 
 #define ANNOUNCE_PREFIX                                                             \
     "[Message from " BOT_NAME ", " OWNER "'s Grok Bot. Read it to " OWNER " now in " \
@@ -210,6 +219,12 @@ static void on_tap(void *ctx)
     post(EV_TAP);
 }
 
+static void on_ambient(uint8_t level, void *ctx)
+{
+    (void)ctx;
+    app_buddy_set_ambient(s.buddy, level);
+}
+
 static void on_level(uint8_t level, void *ctx)
 {
     (void)ctx;
@@ -299,6 +314,55 @@ static void handle_audio_delta(const char *b64)
     post(EV_AUDIO);
 }
 
+/* Expressions from Grok's own words, as the transcript streams in: instant and
+ * free (an emote tool would pause the audio for a round trip). First match wins. */
+static const struct {
+    const char *word;
+    app_buddy_expr_t expr;
+} EXPR_WORDS[] = {
+    { "haha", APP_BUDDY_EXPR_LAUGH },     { "hah", APP_BUDDY_EXPR_LAUGH },
+    { "lol", APP_BUDDY_EXPR_LAUGH },      { "laugh", APP_BUDDY_EXPR_LAUGH },
+    { "funny", APP_BUDDY_EXPR_LAUGH },    { "hilarious", APP_BUDDY_EXPR_LAUGH },
+    { "wow", APP_BUDDY_EXPR_SURPRISED },  { "whoa", APP_BUDDY_EXPR_SURPRISED },
+    { "no way", APP_BUDDY_EXPR_SURPRISED }, { "seriously", APP_BUDDY_EXPR_SURPRISED },
+    { "amazing", APP_BUDDY_EXPR_SURPRISED }, { "incredible", APP_BUDDY_EXPR_SURPRISED },
+    { "love", APP_BUDDY_EXPR_LOVE },      { "adorable", APP_BUDDY_EXPR_LOVE },
+    { "sorry", APP_BUDDY_EXPR_SAD },      { "unfortunately", APP_BUDDY_EXPR_SAD },
+    { "oh no", APP_BUDDY_EXPR_SAD },      { "sad", APP_BUDDY_EXPR_SAD },
+    { "hmm", APP_BUDDY_EXPR_CURIOUS },    { "interesting", APP_BUDDY_EXPR_CURIOUS },
+    { "wonder", APP_BUDDY_EXPR_CURIOUS }, { "curious", APP_BUDDY_EXPR_CURIOUS },
+    { "actually", APP_BUDDY_EXPR_SKEPTICAL }, { "doubt", APP_BUDDY_EXPR_SKEPTICAL },
+    { "not so sure", APP_BUDDY_EXPR_SKEPTICAL }, { "suspicious", APP_BUDDY_EXPR_SKEPTICAL },
+    { "great", APP_BUDDY_EXPR_HAPPY },    { "awesome", APP_BUDDY_EXPR_HAPPY },
+    { "glad", APP_BUDDY_EXPR_HAPPY },     { "nice", APP_BUDDY_EXPR_HAPPY },
+    { "congrat", APP_BUDDY_EXPR_HAPPY },  { "yay", APP_BUDDY_EXPR_HAPPY },
+    { "happy", APP_BUDDY_EXPR_HAPPY },    { "fun", APP_BUDDY_EXPR_HAPPY },
+};
+
+static void express_from_transcript(const char *delta)
+{
+    /* Keep a short lowercase tail so words split across deltas still match. */
+    static char tail[96];
+    size_t tl = strlen(tail);
+    for (const char *p = delta; *p; ++p) {
+        if (tl + 1 >= sizeof(tail)) {
+            memmove(tail, tail + 48, tl - 48 + 1);
+            tl -= 48;
+        }
+        tail[tl++] = (char)tolower((unsigned char)*p);
+        tail[tl] = '\0';
+    }
+    for (size_t i = 0; i < sizeof(EXPR_WORDS) / sizeof(EXPR_WORDS[0]); ++i) {
+        char *hit = strstr(tail, EXPR_WORDS[i].word);
+        if (hit) {
+            app_buddy_express(s.buddy, EXPR_WORDS[i].expr);
+            /* Consume through the match so it fires once. */
+            memmove(tail, hit + strlen(EXPR_WORDS[i].word), strlen(hit + strlen(EXPR_WORDS[i].word)) + 1);
+            return;
+        }
+    }
+}
+
 static void handle_message(const char *msg, size_t len)
 {
     cJSON *root = cJSON_ParseWithLength(msg, len);
@@ -348,6 +412,11 @@ static void handle_message(const char *msg, size_t len)
         post(EV_RESPONSE_CREATED);
     } else if (!strcmp(type, "response.done")) {
         post(EV_RESPONSE_DONE);
+    } else if (!strcmp(type, "response.output_audio_transcript.delta")) {
+        const cJSON *d = cJSON_GetObjectItemCaseSensitive(root, "delta");
+        if (cJSON_IsString(d)) {
+            express_from_transcript(d->valuestring);
+        }
     } else if (!strcmp(type, "response.output_audio_transcript.done")) {
         const cJSON *t = cJSON_GetObjectItemCaseSensitive(root, "transcript");
         if (cJSON_IsString(t)) {
@@ -781,7 +850,16 @@ static void on_event(const msg_t *m)
         send_tool_output(m->call_id, out[0] ? out : "{\"status\":\"failed\"}");
         break;
     }
-    case EV_ALARM_RING:
+    case EV_ALARM_RING: {
+        /* Morning alarm: ask the bot for a briefing now so it's ready soon after. */
+        time_t now_t = time(NULL);
+        struct tm lt;
+        localtime_r(&now_t, &lt);
+        if (s.bot_enabled && app_alarm_time_valid() && lt.tm_hour >= 4 && lt.tm_hour < 12) {
+            ESP_LOGI(TAG, "morning alarm: asking %s for a briefing", BOT_NAME);
+            voice_bot_send("", BRIEFING_TASK);
+        }
+    }
         /* Stop any conversation; the alarm owns the speaker until dismissed. */
         if (s.state == V_SPEAKING || s.state == V_THINKING) {
             atomic_store(&s.discard, true);
@@ -906,15 +984,22 @@ static void on_event(const msg_t *m)
         }
         break;
     case EV_TOOL_SENT:
-        s.tool_pending = false;
         s.pending_tasks++;
         s.pending_since_us = esp_timer_get_time();
         app_buddy_set_busy(s.buddy, true);
+        if (!m->call_id[0]) {
+            break;   /* device-initiated task (morning briefing): no tool call to answer */
+        }
+        s.tool_pending = false;
         send_tool_output(m->call_id,
                          "{\"status\":\"sent\",\"note\":\"" BOT_NAME " is working on it; its answer "
                          "will be read aloud when it arrives.\"}");
         break;
     case EV_TOOL_FAILED:
+        if (!m->call_id[0]) {
+            ESP_LOGW(TAG, "couldn't send the morning briefing request");
+            break;
+        }
         s.tool_pending = false;
         send_tool_output(m->call_id, "{\"status\":\"failed\",\"reason\":\"couldn't reach " BOT_NAME "\"}");
         break;
@@ -1121,6 +1206,7 @@ esp_err_t app_voice_start(const app_voice_config_t *config)
     mbedtls_platform_zeroize(relay_token, sizeof(relay_token));
     ESP_LOGI(TAG, "%s hand-off %s", BOT_NAME, s.bot_enabled ? "enabled" : "not configured");
     app_buddy_set_tap_handler(s.buddy, on_tap, NULL);
+    voice_audio_set_ambient_cb(on_ambient, NULL);
     const bool wake = app_wake_start(on_wake_word, NULL) == ESP_OK;
     update_wake_enable();
     ESP_LOGI(TAG, "Grok voice ready: tap to talk%s", wake ? " or say \"Hey Grok\"" : "");
