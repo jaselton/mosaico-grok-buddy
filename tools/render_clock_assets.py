@@ -94,16 +94,10 @@ def dial(wordmark, subtitle):
     im.paste(sunburst, (0, 0), m)
     d = ImageDraw.Draw(im)
 
-    # City disc
+    # City disc base (names live on worldtimer_cities.png, which rotates)
     im.paste((14, 30, 76), (0, 0), annulus_mask(R_CITY_OUT * S, R_CITY_IN * S))
-    for i, cn in enumerate(CITIES):
-        deg = (i * 15 + 90) % 360           # LONDON at 3 o'clock; i*15 degrees per zone
-        top = deg >= 272 or deg <= 88
-        size = 8.6 if len(cn) <= 7 else 7.4
-        rmid = (R_CITY_OUT + R_CITY_IN) / 2 * S + (3.5 * S if top else -3.5 * S)
-        arc_text(im, cn, rmid, deg, size, (238, 240, 246), outward=top)
-        sep = deg + 7.5
-        d.line((pol(R_CITY_OUT * S - 4 * S, sep), pol(R_CITY_IN * S + 4 * S, sep)), fill=(62, 88, 152), width=S)
+    # Reference index at 12, on the rim outside the city disc
+    d.polygon([(C, C - 232.5 * S), (C - 6 * S, C - 240 * S), (C + 6 * S, C - 240 * S)], fill=(230, 60, 50))
     # Recessed track for the rotating 24 h disc (drawn at runtime)
     im.paste((10, 22, 56), (0, 0), annulus_mask(R_RING_OUT * S, R_RING_IN * S))
 
@@ -138,11 +132,12 @@ def dial(wordmark, subtitle):
     d.ellipse((ax - ar, ay - ar, ax + ar, ay + ar), fill=(10, 22, 54), outline=(100, 120, 175), width=S)
     box = (ax - ar + 8 * S, ay - ar + 8 * S, ax + ar - 8 * S, ay + ar - 8 * S)
     d.arc(box, 150, 250, fill=(40, 60, 90), width=7 * S)
+    d.arc(box, 150, 172, fill=(214, 64, 52), width=7 * S)
     d.arc(box, 228, 250, fill=(70, 200, 120), width=7 * S)
     d.text((ax + 8 * S, ay - 12 * S), "ALARM", font=font(7.5 * S), fill=(240, 240, 245), anchor="mm")
     d.text((ax + 8 * S, ay - 1 * S), "RESERVE", font=font(6.5 * S), fill=(200, 205, 220), anchor="mm")
     # PIL arcs start at 3 o'clock; 250 there is 340 clockwise-from-12, the full end.
-    for lbl, deg, col in (("F", 336, (70, 200, 120)), ("E", 246, (200, 205, 220))):
+    for lbl, deg, col in (("F", 336, (70, 200, 120)), ("E", 246, (214, 64, 52))):
         lx, ly = pol(ar - 21 * S, deg, ax, ay)
         d.text((lx, ly), lbl, font=font(7.5 * S), fill=col, anchor="mm")
 
@@ -160,7 +155,25 @@ def dial(wordmark, subtitle):
     return im.resize((W, W), Image.LANCZOS)
 
 
-def ring():
+def cities(top_style):
+    """City disc, LONDON at 3 o'clock (city i at 90 + 15i degrees); rotated on
+    the device so the reference city sits at 12. Two copies: names reading
+    along the top of the dial, and names reading along the bottom; the device
+    picks per pixel by where each name lands after rotation."""
+    lay = Image.new("RGBA", (N, N), (0, 0, 0, 0))
+    lay.paste((14, 30, 76, 255), (0, 0), annulus_mask(R_CITY_OUT * S, R_CITY_IN * S))
+    d = ImageDraw.Draw(lay)
+    for i, cn in enumerate(CITIES):
+        deg = (i * 15 + 90) % 360
+        size = 8.6 if len(cn) <= 7 else 7.4
+        rmid = (R_CITY_OUT + R_CITY_IN) / 2 * S + (3.5 * S if top_style else -3.5 * S)
+        arc_text(lay, cn, rmid, deg, size, (238, 240, 246, 255), outward=top_style)
+        sep = deg + 7.5
+        d.line((pol(R_CITY_OUT * S - 4 * S, sep), pol(R_CITY_IN * S + 4 * S, sep)), fill=(62, 88, 152, 255), width=S)
+    return lay.resize((W, W), Image.LANCZOS)
+
+
+def ring(top_style=None):
     """Day/night disc, 0 h at the top, hours clockwise (15 degrees each)."""
     lay = Image.new("RGBA", (N, N), (0, 0, 0, 0))
     ld = ImageDraw.Draw(lay)
@@ -175,7 +188,7 @@ def ring():
     for h in range(24):
         deg = hd(h)
         day = 6 <= h < 18
-        top = deg >= 272 or deg <= 88
+        top = (deg >= 272 or deg <= 88) if top_style is None else top_style
         rmid = (r1 + r2) / 2 + (3 * S if top else -3 * S)
         arc_text(lay, str(h), rmid, deg, 10.5, (24, 34, 72, 255) if day else (242, 242, 242, 255), outward=top)
     return lay.resize((W, W), Image.LANCZOS)
@@ -197,7 +210,10 @@ def main():
     args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     dial(args.wordmark, args.subtitle).save(OUT / "worldtimer_dial.png", optimize=True)
-    ring().save(OUT / "worldtimer_ring.png", optimize=True)
+    ring(True).save(OUT / "worldtimer_ring.png", optimize=True)          # numbers read along the top
+    ring(False).save(OUT / "worldtimer_ring_bottom.png", optimize=True)  # ... along the bottom
+    cities(True).save(OUT / "worldtimer_cities_top.png", optimize=True)
+    cities(False).save(OUT / "worldtimer_cities_bottom.png", optimize=True)
     digits().save(OUT / "digits.png", optimize=True)
     # Positions computed while drawing; app_clock.c must match these.
     print(f"DATE_CENTRE {DATE}  ONOFF {ONOFF}  SUB3 {SUB3}  SUB7 {SUB7}")

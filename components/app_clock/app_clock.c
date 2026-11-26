@@ -36,6 +36,12 @@ extern const uint8_t dial_png_start[] asm("_binary_worldtimer_dial_png_start");
 extern const uint8_t dial_png_end[] asm("_binary_worldtimer_dial_png_end");
 extern const uint8_t ring_png_start[] asm("_binary_worldtimer_ring_png_start");
 extern const uint8_t ring_png_end[] asm("_binary_worldtimer_ring_png_end");
+extern const uint8_t ring_bot_png_start[] asm("_binary_worldtimer_ring_bottom_png_start");
+extern const uint8_t ring_bot_png_end[] asm("_binary_worldtimer_ring_bottom_png_end");
+extern const uint8_t cities_top_png_start[] asm("_binary_worldtimer_cities_top_png_start");
+extern const uint8_t cities_top_png_end[] asm("_binary_worldtimer_cities_top_png_end");
+extern const uint8_t cities_bot_png_start[] asm("_binary_worldtimer_cities_bottom_png_start");
+extern const uint8_t cities_bot_png_end[] asm("_binary_worldtimer_cities_bottom_png_end");
 extern const uint8_t digits_png_start[] asm("_binary_digits_png_start");
 extern const uint8_t digits_png_end[] asm("_binary_digits_png_end");
 
@@ -69,9 +75,10 @@ extern const uint8_t digits_png_end[] asm("_binary_digits_png_end");
 #define COL_SHADOW 0x081028
 #define COL_ALARM 0x2C74E2
 #define COL_ALARM_DARK 0x142C68
+#define COL_ALARM_TIP 0xE03C2E
 #define COL_CHRONO 0xF0F0F4
 #define COL_GREEN 0x46C878
-#define COL_OFF 0x283C5A
+#define COL_OFF 0xD64034
 
 static const int8_t CITY_UTC[24] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1 };
 
@@ -79,11 +86,15 @@ static struct {
     esp_gsp_handle_t ui;
     uint16_t bind, scene, current_scene;
     uint16_t *dial;        /* RGB565 static dial */
-    uint8_t *ring;         /* RGBA disc */
+    uint8_t *ring;         /* RGBA 24 h disc */
+    uint8_t *cities;       /* RGBA city disc, names reading along the top */
+    uint8_t *ring_bot;     /* 24 h disc, numbers reading along the bottom */
+    uint8_t *cities_bot;   /* same, names reading along the bottom */
     uint16_t *bg;          /* dial + rotated disc, rebuilt each minute */
     uint8_t *digits;       /* RGB digit strip */
     int bg_minute;         /* UTC minute the cache was built for */
-    int home_city;         /* -1 = follow the device's local time zone */
+    int home_city;         /* reference city at 12 (index into CITY_UTC) */
+    int local_city;        /* the device's own zone (standard time); shows DST-aware local time */
     /* chronograph */
     bool chrono_running;
     int64_t chrono_start_us, chrono_accum_us;
@@ -95,7 +106,7 @@ static struct {
     uint8_t battery;       /* 0..100 */
     bool charging;
     int64_t battery_read_us;
-} c = { .home_city = -1, .bg_minute = -1, .drag_minutes = -1 };
+} c = { .home_city = 18, .local_city = 18, .bg_minute = -1, .drag_minutes = -1 };
 
 /* ---------- small helpers ---------- */
 
@@ -145,7 +156,7 @@ static void local_now(struct tm *out, double *utc_hours)
     gettimeofday(&tv, NULL);
     const double secs = (double)tv.tv_sec + tv.tv_usec / 1e6;
     *utc_hours = fmod(secs / 3600.0, 24.0);
-    if (c.home_city >= 0) {
+    if (c.home_city != c.local_city) {
         time_t t = (time_t)(secs + CITY_UTC[c.home_city] * 3600.0);
         gmtime_r(&t, out);
     } else {
@@ -156,34 +167,45 @@ static void local_now(struct tm *out, double *utc_hours)
 
 /* ---------- background: dial + rotated day/night disc ---------- */
 
-static void rebuild_background(double utc_hours)
+/* Composite an RGBA disc layer, rotated clockwise by deg, over the annulus. */
+static void rotate_layer(const uint8_t *src_top, const uint8_t *src_bottom, int r_in, int r_out, float deg)
 {
-    /* Hour h sits at 15h degrees on the disc image; rotate so each city (UTC+i,
-     * at 90+15i degrees) faces its own local hour: theta = 90 - 15*UTC. */
-    const float theta = (float)((90.0 - 15.0 * utc_hours) * M_PI / 180.0);
-    const float cs = cosf(-theta), sn = sinf(-theta);
-    memcpy(c.bg, c.dial, FW * FH * 2);
-    const int r_out2 = R_RING_OUT * R_RING_OUT, r_in2 = R_RING_IN * R_RING_IN;
-    for (int y = 240 - R_RING_OUT; y <= 240 + R_RING_OUT; ++y) {
+    const float th = deg * (float)M_PI / 180.0f;
+    const float cs = cosf(-th), sn = sinf(-th);
+    const int r_out2 = r_out * r_out, r_in2 = r_in * r_in;
+    for (int y = 240 - r_out; y <= 240 + r_out; ++y) {
         const float dy = y - CY;
-        for (int x = 240 - R_RING_OUT; x <= 240 + R_RING_OUT; ++x) {
+        for (int x = 240 - r_out; x <= 240 + r_out; ++x) {
             const float dx = x - CX;
             const int d2 = (int)(dx * dx + dy * dy);
             if (d2 > r_out2 || d2 < r_in2) {
                 continue;
             }
-            /* Inverse-rotate into the disc image and sample bilinearly. */
+            /* Inverse-rotate into the layer image and sample bilinearly. */
             const float sx = CX + dx * cs - dy * sn, sy = CY + dx * sn + dy * cs;
             const int ix = (int)sx, iy = (int)sy;
             if (ix < 0 || iy < 0 || ix >= FW - 1 || iy >= FH - 1) {
                 continue;
             }
             const float fx = sx - ix, fy = sy - iy;
+            /* Labels sit on 15-degree cells. A label whose cell lands in the
+             * top half reads outward, otherwise inward, so text stays upright
+             * and no label is split between the two styles. */
+            const uint8_t *src = src_top;
+            if (src_bottom) {
+                const float sa = atan2f(sy - CY, sx - CX) * 180.0f / (float)M_PI + 90.0f;
+                float da = roundf(sa / 15.0f) * 15.0f + deg;
+                da = fmodf(da, 360.0f);
+                if (da < 0) {
+                    da += 360.0f;
+                }
+                src = (da >= 277.5f || da < 82.5f) ? src_top : src_bottom;
+            }
             float acc[4] = { 0 };
             const float wts[4] = { (1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy };
             const int idx[4] = { iy * FW + ix, iy * FW + ix + 1, (iy + 1) * FW + ix, (iy + 1) * FW + ix + 1 };
             for (int k = 0; k < 4; ++k) {
-                const uint8_t *p = &c.ring[idx[k] * 4];
+                const uint8_t *p = &src[idx[k] * 4];
                 for (int ch = 0; ch < 4; ++ch) {
                     acc[ch] += p[ch] * wts[k];
                 }
@@ -191,6 +213,35 @@ static void rebuild_background(double utc_hours)
             const uint32_t rgb = ((uint32_t)acc[0] << 16) | ((uint32_t)acc[1] << 8) | (uint32_t)acc[2];
             c.bg[y * FW + x] = blend565(c.bg[y * FW + x], rgb, acc[3] / 255.0f);
         }
+    }
+}
+
+/* The city disc turns so the reference city sits at 12 (city i is drawn at
+ * 90 + 15i degrees), and the 24 h disc turns so the reference city's hour is
+ * at 12. Every other city then faces its own hour, and as time passes the
+ * 24 h disc creeps anticlockwise, as on a mechanical world-timer. */
+static void rebuild_background(double home_hours)
+{
+    memcpy(c.bg, c.dial, FW * FH * 2);
+    rotate_layer(c.cities, c.cities_bot, R_CITY_IN, R_CITY_OUT, -(90.0f + 15.0f * c.home_city));
+    rotate_layer(c.ring, c.ring_bot, R_RING_IN, R_RING_OUT, (float)(-15.0 * home_hours));
+}
+
+static double tm_hours(const struct tm *lt)
+{
+    return lt->tm_hour + lt->tm_min / 60.0 + lt->tm_sec / 3600.0;
+}
+
+/* Rebuild the cached disc layers when the minute or the reference city changes. */
+static void refresh_background(bool force)
+{
+    struct tm lt;
+    double utc_h;
+    local_now(&lt, &utc_h);
+    const int key = (lt.tm_hour * 60 + lt.tm_min) * 32 + c.home_city;
+    if (force || key != c.bg_minute) {
+        c.bg_minute = key;
+        rebuild_background(tm_hours(&lt));
     }
 }
 
@@ -234,7 +285,7 @@ static float sd_poly(float px, float py, const float *v, int n)
     return s * sqrtf(d);
 }
 
-typedef enum { SH_SEG, SH_POLY, SH_CIRCLE } shape_kind_t;
+typedef enum { SH_SEG, SH_POLY, SH_CIRCLE, SH_RING } shape_kind_t;   /* ring: x y r half-width */
 typedef struct {
     shape_kind_t kind;
     float a[12];   /* seg: ax ay bx by r | poly: up to 6 points | circle: x y r */
@@ -250,8 +301,9 @@ static void shape_bbox(const shape_t *s, int *x0, int *y0, int *x1, int *y1)
         minx = fminf(s->a[0], s->a[2]); maxx = fmaxf(s->a[0], s->a[2]);
         miny = fminf(s->a[1], s->a[3]); maxy = fmaxf(s->a[1], s->a[3]);
         pad += s->a[4];
-    } else if (s->kind == SH_CIRCLE) {
-        minx = s->a[0] - s->a[2]; maxx = s->a[0] + s->a[2]; miny = s->a[1] - s->a[2]; maxy = s->a[1] + s->a[2];
+    } else if (s->kind == SH_CIRCLE || s->kind == SH_RING) {
+        const float rr = s->a[2] + (s->kind == SH_RING ? s->a[3] : 0);
+        minx = s->a[0] - rr; maxx = s->a[0] + rr; miny = s->a[1] - rr; maxy = s->a[1] + rr;
     } else {
         for (int i = 0; i < s->n; ++i) {
             minx = fminf(minx, s->a[i * 2]); maxx = fmaxf(maxx, s->a[i * 2]);
@@ -279,6 +331,8 @@ static void draw_shape(const region_t *r, const shape_t *s)
                 d = sd_segment(px, py, s->a[0], s->a[1], s->a[2], s->a[3], s->a[4]);
             } else if (s->kind == SH_CIRCLE) {
                 d = sqrtf((px - s->a[0]) * (px - s->a[0]) + (py - s->a[1]) * (py - s->a[1])) - s->a[2];
+            } else if (s->kind == SH_RING) {
+                d = fabsf(sqrtf((px - s->a[0]) * (px - s->a[0]) + (py - s->a[1]) * (py - s->a[1])) - s->a[2]) - s->a[3];
             } else {
                 d = sd_poly(px, py, s->a, s->n);
             }
@@ -326,34 +380,39 @@ static void draw_sword(const region_t *r, float deg, float len, float width)
     draw_shape(r, &lume);
 }
 
-/* Central alarm hand: blue shaft, hollow arrowhead, round counterweight. */
+/* Central alarm hand: a skeletonized blue frame (open lozenge) with a solid
+ * red arrow tip and a hollow ring counterweight. */
 static void draw_alarm_hand(const region_t *r, float deg, bool armed)
 {
     const float a = (deg - 90.0f) * (float)M_PI / 180.0f;
-    const float px = -sinf(a), py = cosf(a);
-    const float alpha = armed ? 1.0f : 0.55f;
-    float sx, sy, ex, ey;
-    pol(-30, deg, CX, CY, &sx, &sy);
-    pol(128, deg, CX, CY, &ex, &ey);
-    shape_t shaft = { .kind = SH_SEG, .a = { sx, sy, ex, ey, 2.4f }, .rgb = COL_ALARM, .alpha = alpha };
-    draw_shape(r, &shaft);
+    const float ux = cosf(a), uy = sinf(a), px = -uy, py = ux;
+    const float alpha = armed ? 1.0f : 0.6f;
+    /* Frame outline: tail (r=-22) -> widest (r=58, +-6.5) -> neck (r=132, +-2) */
+    const float pts[4][2] = { { -22, 0 }, { 58, 6.5f }, { 132, 2.0f }, { 132, -2.0f } };
+    float x[5], y[5];
+    x[0] = CX + ux * pts[0][0]; y[0] = CY + uy * pts[0][0];
+    x[1] = CX + ux * pts[1][0] + px * pts[1][1]; y[1] = CY + uy * pts[1][0] + py * pts[1][1];
+    x[2] = CX + ux * pts[2][0] + px * pts[2][1]; y[2] = CY + uy * pts[2][0] + py * pts[2][1];
+    x[3] = CX + ux * pts[1][0] - px * pts[1][1]; y[3] = CY + uy * pts[1][0] - py * pts[1][1];
+    x[4] = CX + ux * pts[2][0] - px * pts[2][1]; y[4] = CY + uy * pts[2][0] - py * pts[2][1];
+    const int edges[4][2] = { { 0, 1 }, { 1, 2 }, { 0, 3 }, { 3, 4 } };
+    for (int i = 0; i < 4; ++i) {
+        shape_t e = { .kind = SH_SEG, .a = { x[edges[i][0]], y[edges[i][0]], x[edges[i][1]], y[edges[i][1]], 1.3f },
+                      .rgb = COL_ALARM, .alpha = alpha };
+        draw_shape(r, &e);
+    }
+    /* Solid red arrow tip */
     float tx, ty, bx, by;
-    pol(156, deg, CX, CY, &tx, &ty);
-    pol(126, deg, CX, CY, &bx, &by);
-    shape_t head = { .kind = SH_POLY, .n = 3, .a = { tx, ty, bx + px * 13, by + py * 13, bx - px * 13, by - py * 13 },
-                     .rgb = COL_ALARM, .alpha = alpha };
+    pol(160, deg, CX, CY, &tx, &ty);
+    pol(128, deg, CX, CY, &bx, &by);
+    shape_t head = { .kind = SH_POLY, .n = 3, .a = { tx, ty, bx + px * 7.5f, by + py * 7.5f, bx - px * 7.5f, by - py * 7.5f },
+                     .rgb = COL_ALARM_TIP, .alpha = alpha };
     draw_shape(r, &head);
-    pol(149, deg, CX, CY, &tx, &ty);
-    pol(131, deg, CX, CY, &bx, &by);
-    shape_t hole = { .kind = SH_POLY, .n = 3, .a = { tx, ty, bx + px * 6.5f, by + py * 6.5f, bx - px * 6.5f, by - py * 6.5f },
-                     .rgb = COL_ALARM_DARK, .alpha = alpha };
-    draw_shape(r, &hole);
+    /* Hollow counterweight */
     float cx, cy;
-    pol(-34, deg, CX, CY, &cx, &cy);
-    shape_t cw = { .kind = SH_CIRCLE, .a = { cx, cy, 9 }, .rgb = COL_ALARM, .alpha = alpha };
+    pol(-32, deg, CX, CY, &cx, &cy);
+    shape_t cw = { .kind = SH_RING, .a = { cx, cy, 7.5f, 1.6f }, .rgb = COL_ALARM, .alpha = alpha };
     draw_shape(r, &cw);
-    shape_t cwh = { .kind = SH_CIRCLE, .a = { cx, cy, 4 }, .rgb = COL_ALARM_DARK, .alpha = alpha };
-    draw_shape(r, &cwh);
 }
 
 static void draw_small_hand(const region_t *r, float cx, float cy, float len, float deg, float w, uint32_t rgb)
@@ -483,14 +542,7 @@ static void tick(esp_gsp_handle_t ui, void *ctx)
     if (c.current_scene != c.scene) {
         return;
     }
-    struct tm lt;
-    double utc_h;
-    local_now(&lt, &utc_h);
-    const int utc_min = (int)(utc_h * 60.0);
-    if (utc_min != c.bg_minute) {
-        c.bg_minute = utc_min;
-        rebuild_background(utc_h);
-    }
+    refresh_background(false);
     read_battery();
     esp_gsp_canvas_invalidate(ui, c.bind);
 }
@@ -561,7 +613,7 @@ static bool on_input(esp_gsp_handle_t ui, int32_t x, int32_t y, bool pressed, vo
             return false;   /* a swipe, not a tap */
         }
         const float odx = x - ONOFF_X, ody = y - ONOFF_Y;
-        if (odx * odx + ody * ody < 24 * 24) {
+        if (odx * odx + ody * ody < 24 * 24 || (x < 70 && y > 410)) {   /* window, or the 8 o'clock alarm pusher */
             int ah, am;
             bool on;
             if (app_alarm_get_watch(&ah, &am, &on)) {
@@ -569,7 +621,7 @@ static bool on_input(esp_gsp_handle_t ui, int32_t x, int32_t y, bool pressed, vo
             } else {
                 app_alarm_set_watch(7, 0, true);
             }
-        } else if (x > 390 && y < 90) {                  /* top-right pusher: start/stop */
+        } else if (x > 410 && y < 70) {                  /* top-right pusher: start/stop */
             if (c.chrono_running) {
                 c.chrono_accum_us += esp_timer_get_time() - c.chrono_start_us;
                 c.chrono_running = false;
@@ -577,16 +629,21 @@ static bool on_input(esp_gsp_handle_t ui, int32_t x, int32_t y, bool pressed, vo
                 c.chrono_start_us = esp_timer_get_time();
                 c.chrono_running = true;
             }
-        } else if (x > 390 && y > 390) {                 /* bottom-right pusher: reset */
+        } else if (x > 410 && y > 410) {                 /* bottom-right pusher: reset */
             if (!c.chrono_running) {
                 c.chrono_accum_us = 0;
             }
+        } else if (x < 70 && y < 70) {                   /* 10 o'clock world-time crown: one zone east */
+            c.home_city = (c.home_city + 1) % 24;
+            refresh_background(true);
+            ESP_LOGI(TAG, "reference city %d (UTC%+d)", c.home_city, CITY_UTC[c.home_city]);
         } else if (rad >= R_CITY_IN && rad <= R_CITY_OUT + 6) {
-            /* City ring: city i sits at 90 + 15i degrees. */
-            int i = (int)lroundf((angle_of(x, y) - 90.0f) / 15.0f);
+            /* Tap a city to bring it to 12; tap the one at 12 to return home. */
+            int i = c.home_city + (int)lroundf(angle_of(x, y) / 15.0f);
             i = ((i % 24) + 24) % 24;
-            c.home_city = (c.home_city == i) ? -1 : i;   /* tap again to go back to local */
-            ESP_LOGI(TAG, "home city %d (UTC%+d)", i, CITY_UTC[i]);
+            c.home_city = (i == c.home_city) ? c.local_city : i;
+            refresh_background(true);
+            ESP_LOGI(TAG, "reference city %d (UTC%+d)", c.home_city, CITY_UTC[c.home_city]);
         }
         esp_gsp_canvas_invalidate(c.ui, c.bind);
         return false;
@@ -600,11 +657,7 @@ void app_clock_scene_changed(uint16_t scene_id)
     if (scene_id == c.scene && c.ui && c.bg) {
         /* Binds are scene-scoped and the scene is rebuilt on arrival, so the
          * draw callback is (re)registered each time the clock is shown. */
-        double utc_h;
-        struct tm lt;
-        local_now(&lt, &utc_h);
-        c.bg_minute = (int)(utc_h * 60.0);
-        rebuild_background(utc_h);
+        refresh_background(true);
         const esp_gsp_err_t err = esp_gsp_canvas_set_draw_cb(c.ui, c.bind, draw_face, NULL);
         if (err != ESP_GSP_OK) {
             ESP_LOGE(TAG, "canvas draw cb: %d", err);
@@ -628,10 +681,16 @@ esp_err_t app_clock_start(esp_gsp_handle_t ui, uint16_t canvas_bind, uint16_t sc
     int w, h, rw, rh, dw, dh;
     uint8_t *dial_rgb = decode_png(dial_png_start, dial_png_end, PNG_FORMAT_RGB, &w, &h);
     c.ring = decode_png(ring_png_start, ring_png_end, PNG_FORMAT_RGBA, &rw, &rh);
+    int cw = 0, ch = 0;
+    int bw = 0, bh = 0;
+    c.cities = decode_png(cities_top_png_start, cities_top_png_end, PNG_FORMAT_RGBA, &cw, &ch);
+    int qw = 0, qh = 0;
+    c.ring_bot = decode_png(ring_bot_png_start, ring_bot_png_end, PNG_FORMAT_RGBA, &qw, &qh);
+    c.cities_bot = decode_png(cities_bot_png_start, cities_bot_png_end, PNG_FORMAT_RGBA, &bw, &bh);
     c.digits = decode_png(digits_png_start, digits_png_end, PNG_FORMAT_RGB, &dw, &dh);
     c.dial = heap_caps_malloc(FW * FH * 2, MALLOC_CAP_SPIRAM);
     c.bg = heap_caps_malloc(FW * FH * 2, MALLOC_CAP_SPIRAM);
-    if (!dial_rgb || !c.ring || !c.digits || !c.dial || !c.bg || w != FW || h != FH || rw != FW || rh != FH ||
+    if (!dial_rgb || !c.ring || !c.cities || cw != FW || ch != FH || !c.ring_bot || qw != FW || qh != FH || !c.cities_bot || bw != FW || bh != FH || !c.digits || !c.dial || !c.bg || w != FW || h != FH || rw != FW || rh != FH ||
             dw != DIGIT_W * 10 || dh != DIGIT_H) {
         ESP_LOGE(TAG, "clock assets unavailable");
         heap_caps_free(dial_rgb);
@@ -646,6 +705,16 @@ esp_err_t app_clock_start(esp_gsp_handle_t ui, uint16_t canvas_bind, uint16_t sc
         ESP_LOGW(TAG, "battery gauge unavailable; alarm reserve reads empty");
     }
     read_battery();
+    {
+        /* Home city = the device zone's standard-time offset (TZ from Kconfig). */
+        const time_t jan = (time_t)20468 * 86400 + 12 * 3600;   /* 2026-01-15 12:00 UTC */
+        struct tm lt;
+        localtime_r(&jan, &lt);
+        int off = lt.tm_hour - 12 + (lt.tm_mday - 15) * 24;
+        off = ((off % 24) + 24) % 24;            /* index i has UTC offset i (or i-24) */
+        c.local_city = c.home_city = off;
+        ESP_LOGI(TAG, "home city %d (UTC%+d)", off, CITY_UTC[off]);
+    }
     esp_gsp_set_input_interceptor(ui, on_input, NULL);
     esp_gsp_timer_create(ui, 1000, tick, NULL);
     esp_gsp_timer_create(ui, 100, fast_tick, NULL);
