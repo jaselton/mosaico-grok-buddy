@@ -12,3 +12,11 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+
+# Internal DMA RAM is tight once voice is up (the display needs contiguous
+# blocks for SPI transfers). Fewer static Wi-Fi RX/TX buffers (~1.6 KB each,
+# internal; TX must stay static with SPIRAM_TRY_ALLOCATE_WIFI_LWIP) leave
+# ~23 KB more. Voice streaming needs well under 1 Mbit/s.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_RX_BA_WIN=6

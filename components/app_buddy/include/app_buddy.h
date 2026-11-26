@@ -95,8 +95,12 @@ void app_buddy_set_pet_handler(app_buddy_handle_t handle, app_buddy_tap_cb_t cb,
 typedef void (*app_buddy_scene_cb_t)(uint16_t scene_id, void *ctx);
 void app_buddy_set_scene_handler(app_buddy_handle_t handle, app_buddy_scene_cb_t cb, void *ctx);
 
-/** Canvas bind and scene id of the clock screen in the shared UI bundle. */
-void app_buddy_clock_canvas(uint16_t *bind, uint16_t *scene);
+/** Scene ids and (scene-local) binds of the other screens in the shared UI bundle. */
+typedef struct {
+    uint16_t clock_scene, clock_canvas;
+    uint16_t timer_scene, timer_canvas, timer_digits, timer_sub, timer_reset;
+} app_buddy_screen_ids_t;
+void app_buddy_screen_ids(app_buddy_screen_ids_t *out);
 
 /** Show slow dots under the idle eyes while a background task runs (any task). */
 void app_buddy_set_busy(app_buddy_handle_t handle, bool busy);

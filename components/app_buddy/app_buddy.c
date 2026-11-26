@@ -744,10 +744,15 @@ void app_buddy_set_scene_handler(app_buddy_handle_t handle, app_buddy_scene_cb_t
     }
 }
 
-void app_buddy_clock_canvas(uint16_t *bind, uint16_t *scene)
+void app_buddy_screen_ids(app_buddy_screen_ids_t *out)
 {
-    *bind = GSP_CLOCK_BIND_FACE;
-    *scene = GSP_BUNDLE_SCENE_CLOCK;
+    out->clock_scene = GSP_BUNDLE_SCENE_CLOCK;
+    out->clock_canvas = GSP_CLOCK_BIND_FACE;
+    out->timer_scene = GSP_BUNDLE_SCENE_TIMER;
+    out->timer_canvas = GSP_TIMER_BIND_TFACE;
+    out->timer_digits = GSP_TIMER_BIND_TDIGITS;
+    out->timer_sub = GSP_TIMER_BIND_TSUB;
+    out->timer_reset = GSP_TIMER_BIND_TRESET;
 }
 
 void app_buddy_set_busy(app_buddy_handle_t handle, bool busy)

@@ -24,26 +24,20 @@
 #include <time.h>
 
 #include "app_alarm.h"
+#include "clock_internal.h"
 #include "bsp/battery.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "png.h"
 
 static const char *TAG = "app_clock";
 
-extern const uint8_t dial_png_start[] asm("_binary_worldtimer_dial_png_start");
-extern const uint8_t dial_png_end[] asm("_binary_worldtimer_dial_png_end");
-extern const uint8_t ring_png_start[] asm("_binary_worldtimer_ring_png_start");
-extern const uint8_t ring_png_end[] asm("_binary_worldtimer_ring_png_end");
-extern const uint8_t ring_bot_png_start[] asm("_binary_worldtimer_ring_bottom_png_start");
-extern const uint8_t ring_bot_png_end[] asm("_binary_worldtimer_ring_bottom_png_end");
-extern const uint8_t cities_top_png_start[] asm("_binary_worldtimer_cities_top_png_start");
-extern const uint8_t cities_top_png_end[] asm("_binary_worldtimer_cities_top_png_end");
-extern const uint8_t cities_bot_png_start[] asm("_binary_worldtimer_cities_bottom_png_start");
-extern const uint8_t cities_bot_png_end[] asm("_binary_worldtimer_cities_bottom_png_end");
-extern const uint8_t digits_png_start[] asm("_binary_digits_png_start");
-extern const uint8_t digits_png_end[] asm("_binary_digits_png_end");
+extern const uint8_t dial_bin[] asm("_binary_dial_rgb565_start");
+extern const uint8_t digits_bin[] asm("_binary_digits_rgb565_start");
+extern const uint8_t ring_top_bin[] asm("_binary_ring_top_rgba_start");
+extern const uint8_t ring_bot_bin[] asm("_binary_ring_bottom_rgba_start");
+extern const uint8_t cities_top_bin[] asm("_binary_cities_top_rgba_start");
+extern const uint8_t cities_bot_bin[] asm("_binary_cities_bottom_rgba_start");
 
 #define FW 480
 #define FH 480
@@ -85,13 +79,10 @@ static const int8_t CITY_UTC[24] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -
 static struct {
     esp_gsp_handle_t ui;
     uint16_t bind, scene, current_scene;
-    uint16_t *dial;        /* RGB565 static dial */
-    uint8_t *ring;         /* RGBA 24 h disc */
-    uint8_t *cities;       /* RGBA city disc, names reading along the top */
-    uint8_t *ring_bot;     /* 24 h disc, numbers reading along the bottom */
-    uint8_t *cities_bot;   /* same, names reading along the bottom */
+    const uint8_t *dial;   /* RGB565 static dial (raw, from flash) */
+
     uint16_t *bg;          /* dial + rotated disc, rebuilt each minute */
-    uint8_t *digits;       /* RGB digit strip */
+    const uint8_t *digits; /* RGB565 digit strip (raw, from flash) */
     int bg_minute;         /* UTC minute the cache was built for */
     int home_city;         /* reference city at 12 (index into CITY_UTC) */
     int local_city;        /* the device's own zone (standard time); shows DST-aware local time */
@@ -129,26 +120,7 @@ static inline uint16_t blend565(uint16_t dst, uint32_t rgb, float a)
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-static uint8_t *decode_png(const uint8_t *start, const uint8_t *end, uint32_t fmt, int *w, int *h)
-{
-    png_image img;
-    memset(&img, 0, sizeof(img));
-    img.version = PNG_IMAGE_VERSION;
-    if (!png_image_begin_read_from_memory(&img, start, (size_t)(end - start))) {
-        ESP_LOGE(TAG, "png header: %s", img.message);
-        return NULL;
-    }
-    img.format = fmt;
-    uint8_t *buf = heap_caps_malloc(PNG_IMAGE_SIZE(img), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf || !png_image_finish_read(&img, NULL, buf, 0, NULL)) {
-        ESP_LOGE(TAG, "png decode: %s", img.message);
-        heap_caps_free(buf);
-        return NULL;
-    }
-    *w = (int)img.width;
-    *h = (int)img.height;
-    return buf;
-}
+
 
 static void local_now(struct tm *out, double *utc_hours)
 {
@@ -168,8 +140,10 @@ static void local_now(struct tm *out, double *utc_hours)
 /* ---------- background: dial + rotated day/night disc ---------- */
 
 /* Composite an RGBA disc layer, rotated clockwise by deg, over the annulus. */
+/* Layers are raw RGBA squares of side 2*r_out+2 centred on the dial. */
 static void rotate_layer(const uint8_t *src_top, const uint8_t *src_bottom, int r_in, int r_out, float deg)
 {
+    const int side = 2 * r_out + 2, org = 240 - side / 2;
     const float th = deg * (float)M_PI / 180.0f;
     const float cs = cosf(-th), sn = sinf(-th);
     const int r_out2 = r_out * r_out, r_in2 = r_in * r_in;
@@ -183,11 +157,11 @@ static void rotate_layer(const uint8_t *src_top, const uint8_t *src_bottom, int 
             }
             /* Inverse-rotate into the layer image and sample bilinearly. */
             const float sx = CX + dx * cs - dy * sn, sy = CY + dx * sn + dy * cs;
-            const int ix = (int)sx, iy = (int)sy;
-            if (ix < 0 || iy < 0 || ix >= FW - 1 || iy >= FH - 1) {
+            const int ix = (int)sx - org, iy = (int)sy - org;
+            if (ix < 0 || iy < 0 || ix >= side - 1 || iy >= side - 1) {
                 continue;
             }
-            const float fx = sx - ix, fy = sy - iy;
+            const float fx = sx - (int)sx, fy = sy - (int)sy;
             /* Labels sit on 15-degree cells. A label whose cell lands in the
              * top half reads outward, otherwise inward, so text stays upright
              * and no label is split between the two styles. */
@@ -203,7 +177,7 @@ static void rotate_layer(const uint8_t *src_top, const uint8_t *src_bottom, int 
             }
             float acc[4] = { 0 };
             const float wts[4] = { (1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy };
-            const int idx[4] = { iy * FW + ix, iy * FW + ix + 1, (iy + 1) * FW + ix, (iy + 1) * FW + ix + 1 };
+            const int idx[4] = { iy * side + ix, iy * side + ix + 1, (iy + 1) * side + ix, (iy + 1) * side + ix + 1 };
             for (int k = 0; k < 4; ++k) {
                 const uint8_t *p = &src[idx[k] * 4];
                 for (int ch = 0; ch < 4; ++ch) {
@@ -223,8 +197,8 @@ static void rotate_layer(const uint8_t *src_top, const uint8_t *src_bottom, int 
 static void rebuild_background(double home_hours)
 {
     memcpy(c.bg, c.dial, FW * FH * 2);
-    rotate_layer(c.cities, c.cities_bot, R_CITY_IN, R_CITY_OUT, -(90.0f + 15.0f * c.home_city));
-    rotate_layer(c.ring, c.ring_bot, R_RING_IN, R_RING_OUT, (float)(-15.0 * home_hours));
+    rotate_layer(cities_top_bin, cities_bot_bin, R_CITY_IN, R_CITY_OUT, -(90.0f + 15.0f * c.home_city));
+    rotate_layer(ring_top_bin, ring_bot_bin, R_RING_IN, R_RING_OUT, (float)(-15.0 * home_hours));
 }
 
 static double tm_hours(const struct tm *lt)
@@ -437,8 +411,8 @@ static void blit_digit(const region_t *r, int digit, int dx, int dy)
             if (fx < r->x0 || fx >= r->x0 + r->w) {
                 continue;
             }
-            const uint8_t *p = &c.digits[(y * DIGIT_W * 10 + digit * DIGIT_W + x) * 3];
-            r->px[(fy - r->y0) * r->stride + (fx - r->x0)] = rgb565(((uint32_t)p[0] << 16) | (p[1] << 8) | p[2]);
+            const uint8_t *p = &c.digits[(y * DIGIT_W * 10 + digit * DIGIT_W + x) * 2];
+            r->px[(fy - r->y0) * r->stride + (fx - r->x0)] = (uint16_t)(p[0] | (p[1] << 8));
         }
     }
 }
@@ -557,6 +531,9 @@ static bool on_input(esp_gsp_handle_t ui, int32_t x, int32_t y, bool pressed, vo
 {
     (void)ui;
     (void)ctx;
+    if (timer_face_active()) {
+        return timer_face_input(x, y, pressed);
+    }
     if (c.current_scene != c.scene) {
         return false;
     }
@@ -654,6 +631,7 @@ static bool on_input(esp_gsp_handle_t ui, int32_t x, int32_t y, bool pressed, vo
 void app_clock_scene_changed(uint16_t scene_id)
 {
     c.current_scene = scene_id;
+    timer_face_scene_changed(scene_id);
     if (scene_id == c.scene && c.ui && c.bg) {
         /* Binds are scene-scoped and the scene is rebuilt on arrival, so the
          * draw callback is (re)registered each time the clock is shown. */
@@ -673,33 +651,22 @@ static void fast_tick(esp_gsp_handle_t ui, void *ctx)
     }
 }
 
-esp_err_t app_clock_start(esp_gsp_handle_t ui, uint16_t canvas_bind, uint16_t scene_id)
+esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids)
 {
     c.ui = ui;
-    c.bind = canvas_bind;
-    c.scene = scene_id;
-    int w, h, rw, rh, dw, dh;
-    uint8_t *dial_rgb = decode_png(dial_png_start, dial_png_end, PNG_FORMAT_RGB, &w, &h);
-    c.ring = decode_png(ring_png_start, ring_png_end, PNG_FORMAT_RGBA, &rw, &rh);
-    int cw = 0, ch = 0;
-    int bw = 0, bh = 0;
-    c.cities = decode_png(cities_top_png_start, cities_top_png_end, PNG_FORMAT_RGBA, &cw, &ch);
-    int qw = 0, qh = 0;
-    c.ring_bot = decode_png(ring_bot_png_start, ring_bot_png_end, PNG_FORMAT_RGBA, &qw, &qh);
-    c.cities_bot = decode_png(cities_bot_png_start, cities_bot_png_end, PNG_FORMAT_RGBA, &bw, &bh);
-    c.digits = decode_png(digits_png_start, digits_png_end, PNG_FORMAT_RGB, &dw, &dh);
-    c.dial = heap_caps_malloc(FW * FH * 2, MALLOC_CAP_SPIRAM);
+    c.bind = ids->clock_canvas;
+    c.scene = ids->clock_scene;
+    if (timer_face_start(ui, ids->timer_scene, ids->timer_canvas, ids->timer_digits, ids->timer_sub,
+                         ids->timer_reset) != ESP_OK) {
+        ESP_LOGE(TAG, "timer screen unavailable");
+    }
+    c.dial = dial_bin;
+    c.digits = digits_bin;
     c.bg = heap_caps_malloc(FW * FH * 2, MALLOC_CAP_SPIRAM);
-    if (!dial_rgb || !c.ring || !c.cities || cw != FW || ch != FH || !c.ring_bot || qw != FW || qh != FH || !c.cities_bot || bw != FW || bh != FH || !c.digits || !c.dial || !c.bg || w != FW || h != FH || rw != FW || rh != FH ||
-            dw != DIGIT_W * 10 || dh != DIGIT_H) {
-        ESP_LOGE(TAG, "clock assets unavailable");
-        heap_caps_free(dial_rgb);
-        return ESP_FAIL;
+    if (!c.bg) {
+        ESP_LOGE(TAG, "no memory for the clock background");
+        return ESP_ERR_NO_MEM;
     }
-    for (int i = 0; i < FW * FH; ++i) {
-        c.dial[i] = rgb565(((uint32_t)dial_rgb[i * 3] << 16) | (dial_rgb[i * 3 + 1] << 8) | dial_rgb[i * 3 + 2]);
-    }
-    heap_caps_free(dial_rgb);
     memcpy(c.bg, c.dial, FW * FH * 2);
     if (bsp_battery_init() != ESP_OK) {
         ESP_LOGW(TAG, "battery gauge unavailable; alarm reserve reads empty");

@@ -1,0 +1,68 @@
+{
+  "screen": "timer",
+  "w": 480,
+  "h": 480,
+  "screen_bg": "#000000",
+  "font": "fonts/DejaVuSans-Bold.ttf",
+  "default_font_size": 20,
+  "swipe": true,
+  "objects": [
+    {
+      "type": "image",
+      "parent": -1,
+      "x": 0,
+      "y": 0,
+      "w": 480,
+      "h": 480,
+      "image": "assets/clock_canvas.png",
+      "name": "tface",
+      "bind": "tface"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 90,
+      "y": 198,
+      "w": 300,
+      "h": 100,
+      "text": "00:00",
+      "text_align": "center",
+      "font_size": 88,
+      "fg_color": "#FFFFFF",
+      "font_charset": "0123456789:",
+      "name": "tdigits",
+      "bind": "tdigits"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 100,
+      "y": 304,
+      "w": 280,
+      "h": 30,
+      "text": "drag the ring to set",
+      "text_align": "center",
+      "overflow": "ellipsis",
+      "font_size": 19,
+      "fg_color": "#8A93A6",
+      "font_charset": " 0123456789:\u00b7\u2014-.,!?'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "name": "tsub",
+      "bind": "tsub"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 170,
+      "y": 348,
+      "w": 140,
+      "h": 30,
+      "text": " ",
+      "text_align": "center",
+      "font_size": 18,
+      "fg_color": "#5AB4FF",
+      "font_charset": " 0123456789:\u00b7\u2014-.,!?'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "name": "treset",
+      "bind": "treset"
+    }
+  ]
+}

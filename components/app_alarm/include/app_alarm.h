@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 
@@ -47,6 +48,25 @@ int app_alarm_cancel_all(void);
 
 /** Stop a ringing alarm (shake, pick-up, tap). Returns true if one was ringing. */
 bool app_alarm_dismiss(void);
+
+/** Countdown timer (one at a time, up to 99:59; monotonic, not persisted).
+ * It rings through the same callback as alarms. */
+#define APP_ALARM_TIMER_MAX_S (99 * 60 + 59)
+typedef struct {
+    int total_s;          /* 0 = no timer */
+    int32_t remaining_ms;
+    bool running, done;
+    char label[APP_ALARM_LABEL_MAX];
+} app_alarm_timer_t;
+esp_err_t app_alarm_timer_set(int seconds, const char *label, bool start);
+/** Start, or pause a running timer. */
+void app_alarm_timer_toggle(void);
+void app_alarm_timer_reset(void);
+/** Returns false when no timer is set. */
+bool app_alarm_timer_get(app_alarm_timer_t *out);
+
+/** True if the current/last ring came from the countdown timer. */
+bool app_alarm_ring_is_timer(void);
 
 /** True while an alarm is ringing. */
 bool app_alarm_ringing(void);

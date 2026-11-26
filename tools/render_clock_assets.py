@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Render the world-timer clock face assets (original artwork).
 
-Outputs (480x480 unless noted) into components/app_clock/assets/:
-  worldtimer_dial.png  static dial: sunburst, city disc, minute track, numerals,
-                       sub-dial faces, date frame, wordmark (no moving parts)
-  worldtimer_ring.png  RGBA day/night 24 h disc with 0 h at the top; rotated
-                       on the device every minute
-  digits.png           10 date-wheel digits, 28x30 each, side by side
+Outputs raw pixel files into components/app_clock/assets/ (see main()):
+  dial.rgb565          static dial: sunburst, minute track, numerals, sub-dial
+                       faces, date frame, wordmark (no moving parts)
+  ring_top/bottom.rgba day/night 24 h disc, 0 h at the top; turned every minute
+  cities_top/bottom.rgba city disc; turned so the reference city is at 12
+  digits.rgb565        10 date-wheel digits, 28x30 each, side by side
 
 The moving parts (hands, ring rotation, date digits, gauges, the alarm ON/OFF
 window) are drawn by components/app_clock at runtime.
@@ -203,18 +203,51 @@ def digits():
     return im.resize((w * 10, h), Image.LANCZOS)
 
 
+def rgb565(img):
+    import struct
+    px = img.convert("RGB").tobytes()
+    out = bytearray()
+    for i in range(0, len(px), 3):
+        r, g, b = px[i], px[i + 1], px[i + 2]
+        out += struct.pack("<H", ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3))
+    return bytes(out)
+
+
+def crop_rgba(img, r_out):
+    """Centre square just covering a disc layer, raw RGBA (side = 2*r_out + 2)."""
+    side = 2 * r_out + 2
+    o = W // 2 - side // 2
+    return img.convert("RGBA").crop((o, o, o + side, o + side)).tobytes()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--wordmark", default="GROK")
     ap.add_argument("--subtitle", default="Worldtimer")
+    ap.add_argument("--preview", action="store_true", help="also write PNG previews to /tmp")
     args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    dial(args.wordmark, args.subtitle).save(OUT / "worldtimer_dial.png", optimize=True)
-    ring(True).save(OUT / "worldtimer_ring.png", optimize=True)          # numbers read along the top
-    ring(False).save(OUT / "worldtimer_ring_bottom.png", optimize=True)  # ... along the bottom
-    cities(True).save(OUT / "worldtimer_cities_top.png", optimize=True)
-    cities(False).save(OUT / "worldtimer_cities_bottom.png", optimize=True)
-    digits().save(OUT / "digits.png", optimize=True)
+    for old in OUT.glob("*.png"):
+        old.unlink()
+    # Raw formats so the device never decodes images (decoding at boot starved the display):
+    #   dial.rgb565    480x480 RGB565 little-endian
+    #   *.rgba         centre square of side 2*r_out+2, RGBA8888
+    #   digits.rgb565  280x30 RGB565 (ten 28x30 digits)
+    layers = {
+        "dial": dial(args.wordmark, args.subtitle),
+        "ring_top": ring(True), "ring_bottom": ring(False),        # 24 h numbers read along top / bottom
+        "cities_top": cities(True), "cities_bottom": cities(False),
+        "digits": digits(),
+    }
+    (OUT / "dial.rgb565").write_bytes(rgb565(layers["dial"]))
+    (OUT / "digits.rgb565").write_bytes(rgb565(layers["digits"]))
+    for k in ("ring_top", "ring_bottom"):
+        (OUT / f"{k}.rgba").write_bytes(crop_rgba(layers[k], R_RING_OUT))
+    for k in ("cities_top", "cities_bottom"):
+        (OUT / f"{k}.rgba").write_bytes(crop_rgba(layers[k], R_CITY_OUT))
+    if args.preview:
+        for k, im in layers.items():
+            im.save(f"/tmp/worldtimer_{k}.png")
     # Positions computed while drawing; app_clock.c must match these.
     print(f"DATE_CENTRE {DATE}  ONOFF {ONOFF}  SUB3 {SUB3}  SUB7 {SUB7}")
 

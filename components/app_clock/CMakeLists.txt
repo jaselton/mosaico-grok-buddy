@@ -1,5 +1,6 @@
-idf_component_register(SRCS "app_clock.c"
+idf_component_register(SRCS "app_clock.c" "timer_face.c"
     INCLUDE_DIRS "include"
     REQUIRES esp-gsp
-    PRIV_REQUIRES app_alarm esp-mosaico-bsp espressif__libpng esp_timer log
-    EMBED_FILES "assets/worldtimer_dial.png" "assets/worldtimer_ring.png" "assets/worldtimer_ring_bottom.png" "assets/worldtimer_cities_top.png" "assets/worldtimer_cities_bottom.png" "assets/digits.png")
+    PRIV_REQUIRES app_alarm esp-mosaico-bsp esp_timer log
+    EMBED_FILES "assets/dial.rgb565" "assets/digits.rgb565" "assets/ring_top.rgba" "assets/ring_bottom.rgba"
+        "assets/cities_top.rgba" "assets/cities_bottom.rgba")

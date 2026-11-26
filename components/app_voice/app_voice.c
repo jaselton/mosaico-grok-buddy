@@ -81,7 +81,8 @@ static const char *TAG = "app_voice";
 #define ALARM_INSTRUCTIONS                                                          \
     " You can set alarms and timers on this device with set_alarm: pass `time` "     \
     "(local 24-hour HH:MM) for a clock time, or `in_seconds` for anything relative " \
-    "(\"in 10 minutes\" = 600). A clock-time alarm moves the blue alarm hand on "    \
+    "(\"in 10 minutes\" = 600; up to 99 minutes runs as the countdown timer on "  \
+    "the timer screen, only one at a time). A clock-time alarm moves the blue alarm hand on "    \
     "the watch face; set `daily` true only if they ask for it every day. Add a "     \
     "short label if one was given. cancel_alarms clears them and switches the hand " \
     "off. Confirm briefly using the time the tool returns."
@@ -839,8 +840,13 @@ static void on_event(const msg_t *m)
                 if (rel || (cJSON_IsString(tm) && sscanf(tm->valuestring, "%d:%d", &hh, &mm) == 2)) {
                     const cJSON *dy = a ? cJSON_GetObjectItemCaseSensitive(a, "daily") : NULL;
                     esp_err_t e;
-                    if (rel) {
-                        e = app_alarm_set_in((int)in->valuedouble, label, when, sizeof(when));
+                    const int secs = rel ? (int)in->valuedouble : 0;
+                    if (rel && secs >= 1 && secs <= APP_ALARM_TIMER_MAX_S) {
+                        /* Short relative ones run on the timer screen (works before clock sync). */
+                        e = app_alarm_timer_set(secs, label, true);
+                        snprintf(when, sizeof(when), "timer started: %d:%02d", secs / 60, secs % 60);
+                    } else if (rel) {
+                        e = app_alarm_set_in(secs, label, when, sizeof(when));
                     } else {
                         /* Clock times go on the watch face's blue alarm hand. */
                         const bool every_day = cJSON_IsTrue(dy);
@@ -878,7 +884,8 @@ static void on_event(const msg_t *m)
         time_t now_t = time(NULL);
         struct tm lt;
         localtime_r(&now_t, &lt);
-        if (s.bot_enabled && app_alarm_time_valid() && lt.tm_hour >= 4 && lt.tm_hour < 12) {
+        if (s.bot_enabled && !app_alarm_ring_is_timer() && app_alarm_time_valid() && lt.tm_hour >= 4 &&
+                lt.tm_hour < 12) {
             ESP_LOGI(TAG, "morning alarm: asking %s for a briefing", BOT_NAME);
             voice_bot_send("", BRIEFING_TASK);
         }
@@ -896,6 +903,9 @@ static void on_event(const msg_t *m)
     case EV_ALARM_STOP:
         s.alarm_ringing = false;
         voice_audio_flush_playback();
+        if (app_alarm_ring_is_timer()) {
+            break;   /* a finished timer needs no greeting */
+        }
         if (s.announce_count < MAX_ANNOUNCE) {
             const size_t n = (m->text ? strlen(m->text) : 0) + 2;
             char *t = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

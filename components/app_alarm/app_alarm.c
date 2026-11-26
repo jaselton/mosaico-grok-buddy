@@ -20,6 +20,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_netif_sntp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -55,8 +56,18 @@ static struct {
     void *ctx;
     atomic_bool ringing;
     atomic_bool dismiss;
+    atomic_bool ring_is_timer;
     atomic_bool dirty;      /* list changed; the alarm task persists it */
     char ring_label[APP_ALARM_LABEL_MAX];
+    /* Countdown timer: monotonic, so it works before the clock syncs. Not
+     * persisted (a reboot clears it). Guarded by lock. */
+    struct {
+        int total_s;
+        int64_t end_us;        /* running: esp_timer deadline */
+        int64_t remaining_us;  /* paused: what is left */
+        bool running, done;
+        char label[APP_ALARM_LABEL_MAX];
+    } timer;
 } a;
 
 static void save(void)
@@ -242,6 +253,10 @@ int app_alarm_cancel_all(void)
         a.watch.on = 0;   /* the hand stays where it is, switched off */
         n++;
     }
+    if (a.timer.total_s && !a.timer.done) {
+        n++;
+    }
+    memset(&a.timer, 0, sizeof(a.timer));
     atomic_store(&a.dirty, true);
     xSemaphoreGive(a.lock);
     return n;
@@ -256,6 +271,71 @@ bool app_alarm_dismiss(void)
     return true;
 }
 
+esp_err_t app_alarm_timer_set(int seconds, const char *label, bool start)
+{
+    if (seconds < 1 || seconds > APP_ALARM_TIMER_MAX_S || !a.lock) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(a.lock, portMAX_DELAY);
+    a.timer.total_s = seconds;
+    a.timer.remaining_us = (int64_t)seconds * 1000000;
+    a.timer.done = false;
+    a.timer.running = start;
+    a.timer.end_us = esp_timer_get_time() + a.timer.remaining_us;
+    snprintf(a.timer.label, sizeof(a.timer.label), "%s", label ? label : "");
+    xSemaphoreGive(a.lock);
+    ESP_LOGI(TAG, "timer %d s%s%s", seconds, start ? " started" : " set", label && label[0] ? "" : "");
+    return ESP_OK;
+}
+
+void app_alarm_timer_toggle(void)
+{
+    if (!a.lock) {
+        return;
+    }
+    xSemaphoreTake(a.lock, portMAX_DELAY);
+    const int64_t now = esp_timer_get_time();
+    if (a.timer.running) {
+        a.timer.remaining_us = a.timer.end_us - now;
+        a.timer.running = false;
+    } else if (a.timer.total_s > 0 && !a.timer.done && a.timer.remaining_us > 0) {
+        a.timer.end_us = now + a.timer.remaining_us;
+        a.timer.running = true;
+    }
+    xSemaphoreGive(a.lock);
+}
+
+void app_alarm_timer_reset(void)
+{
+    if (!a.lock) {
+        return;
+    }
+    xSemaphoreTake(a.lock, portMAX_DELAY);
+    memset(&a.timer, 0, sizeof(a.timer));
+    xSemaphoreGive(a.lock);
+}
+
+bool app_alarm_timer_get(app_alarm_timer_t *out)
+{
+    if (!a.lock) {
+        return false;
+    }
+    xSemaphoreTake(a.lock, portMAX_DELAY);
+    out->total_s = a.timer.total_s;
+    out->running = a.timer.running;
+    out->done = a.timer.done;
+    int64_t rem = a.timer.running ? a.timer.end_us - esp_timer_get_time() : a.timer.remaining_us;
+    out->remaining_ms = rem < 0 ? 0 : (int32_t)(rem / 1000);
+    snprintf(out->label, sizeof(out->label), "%s", a.timer.label);
+    xSemaphoreGive(a.lock);
+    return out->total_s > 0;
+}
+
+bool app_alarm_ring_is_timer(void)
+{
+    return atomic_load(&a.ring_is_timer);
+}
+
 bool app_alarm_ringing(void)
 {
     return atomic_load(&a.ringing);
@@ -267,11 +347,44 @@ static void alarm_task(void *arg)
     bool booted = true;
     int64_t ring_started = 0;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(250));
         if (atomic_exchange(&a.dirty, false)) {
             xSemaphoreTake(a.lock, portMAX_DELAY);
             save();
             xSemaphoreGive(a.lock);
+        }
+        const int64_t mono_s = esp_timer_get_time() / 1000000;
+        if (atomic_load(&a.ringing)) {
+            if (atomic_exchange(&a.dismiss, false) || mono_s - ring_started > RING_MAX_S) {
+                atomic_store(&a.ringing, false);
+                ESP_LOGI(TAG, "alarm stopped");
+                if (a.cb) {
+                    a.cb(false, a.ring_label, a.ctx);
+                }
+            }
+            continue;
+        }
+        /* Countdown timer (works without a synced clock) */
+        bool timer_due = false;
+        xSemaphoreTake(a.lock, portMAX_DELAY);
+        if (a.timer.running && esp_timer_get_time() >= a.timer.end_us) {
+            a.timer.running = false;
+            a.timer.done = true;
+            a.timer.remaining_us = 0;
+            snprintf(a.ring_label, sizeof(a.ring_label), "%s", a.timer.label[0] ? a.timer.label : "timer");
+            timer_due = true;
+        }
+        xSemaphoreGive(a.lock);
+        if (timer_due) {
+            atomic_store(&a.dismiss, false);
+            ring_started = mono_s;
+            atomic_store(&a.ring_is_timer, true);
+            atomic_store(&a.ringing, true);
+            ESP_LOGI(TAG, "timer done: %s", a.ring_label);
+            if (a.cb) {
+                a.cb(true, a.ring_label, a.ctx);
+            }
+            continue;
         }
         if (!app_alarm_time_valid()) {
             continue;
@@ -284,16 +397,6 @@ static void alarm_task(void *arg)
             ESP_LOGI(TAG, "clock synced: %s", buf);
         }
         const int64_t now = (int64_t)time(NULL);
-        if (atomic_load(&a.ringing)) {
-            if (atomic_exchange(&a.dismiss, false) || now - ring_started > RING_MAX_S) {
-                atomic_store(&a.ringing, false);
-                ESP_LOGI(TAG, "alarm stopped");
-                if (a.cb) {
-                    a.cb(false, a.ring_label, a.ctx);
-                }
-            }
-            continue;
-        }
         atomic_store(&a.dismiss, false);
         xSemaphoreTake(a.lock, portMAX_DELAY);
         int due = -1;
@@ -337,7 +440,8 @@ static void alarm_task(void *arg)
         xSemaphoreGive(a.lock);
         booted = false;
         if (due >= 0) {
-            ring_started = now;
+            ring_started = mono_s;
+            atomic_store(&a.ring_is_timer, false);
             atomic_store(&a.ringing, true);
             ESP_LOGI(TAG, "alarm ringing%s%s", a.ring_label[0] ? ": " : "", a.ring_label);
             if (a.cb) {

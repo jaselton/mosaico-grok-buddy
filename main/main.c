@@ -16,6 +16,14 @@
 
 static const char *TAG = "grok_desk_buddy";
 
+#include "esp_heap_caps.h"
+static void heap_mark(const char *where)
+{
+    ESP_LOGI(TAG, "heap %s: internal free %u, largest DMA block %u (display needs headroom)", where,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+}
+
 /* The composition root retains owned handles, never controller internals. */
 static struct {
     esp_gsp_handle_t ui;
@@ -49,7 +57,7 @@ static void on_alarm(bool ringing, const char *label, void *ctx)
 }
 
 /* Petting (long press): the face reacts itself; add a purr. */
-/* Swiping between the eyes and the world-timer. */
+/* Swiping between the eyes, the world-timer and the countdown timer. */
 static void on_scene(uint16_t scene_id, void *ctx)
 {
     (void)ctx;
@@ -103,11 +111,17 @@ void app_main(void)
     if (app_motion_start(&motion) == ESP_OK) {
         app_buddy_set_pet_handler(application.controller, on_pet, NULL);
     }
-    uint16_t clock_bind, clock_scene;
-    app_buddy_clock_canvas(&clock_bind, &clock_scene);
-    if (app_clock_start(application.ui, clock_bind, clock_scene) == ESP_OK) {
+    app_buddy_screen_ids_t ids;
+    app_buddy_screen_ids(&ids);
+    const app_clock_ids_t clock_ids = {
+        .clock_scene = ids.clock_scene, .clock_canvas = ids.clock_canvas,
+        .timer_scene = ids.timer_scene, .timer_canvas = ids.timer_canvas,
+        .timer_digits = ids.timer_digits, .timer_sub = ids.timer_sub, .timer_reset = ids.timer_reset,
+    };
+    if (app_clock_start(application.ui, &clock_ids) == ESP_OK) {
         app_buddy_set_scene_handler(application.controller, on_scene, NULL);
     }
+    heap_mark("ready");
     if (voice_err == ESP_OK) {
         ESP_LOGI(TAG, "Grok desk buddy ready (tap to talk)");
     } else {

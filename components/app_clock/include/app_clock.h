@@ -16,12 +16,18 @@ extern "C" {
  * city to make it home); a daily alarm on a central hand (drag to set, tap
  * ON/OFF to arm); battery as the alarm reserve; a chronograph (tap the top-right
  * corner to start/stop, bottom-right to reset); big date. */
-esp_err_t app_clock_start(esp_gsp_handle_t ui, uint16_t canvas_bind, uint16_t scene_id);
+typedef struct {
+    uint16_t clock_scene, clock_canvas;
+    uint16_t timer_scene, timer_canvas, timer_digits, timer_sub, timer_reset;
+} app_clock_ids_t;
+
+/** Starts the world-timer and countdown-timer screens. */
+esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids);
 
 /** Tell the clock which scene is showing (drives repaint and touch). */
 void app_clock_scene_changed(uint16_t scene_id);
 
-/** Minutes the chronograph has been running (0 if stopped/reset). */
+/** Seconds the chronograph has been running (0 if stopped/reset). */
 uint32_t app_clock_chrono_seconds(void);
 
 #ifdef __cplusplus
