@@ -117,6 +117,9 @@ void app_main(void)
         .clock_scene = ids.clock_scene, .clock_canvas = ids.clock_canvas,
         .timer_scene = ids.timer_scene, .timer_canvas = ids.timer_canvas,
         .timer_digits = ids.timer_digits, .timer_sub = ids.timer_sub, .timer_reset = ids.timer_reset,
+        .usage_scene = ids.usage_scene, .usage_canvas = ids.usage_canvas, .usage_title = ids.usage_title,
+        .usage_money = ids.usage_money, .usage_msub = ids.usage_msub, .usage_week = ids.usage_week,
+        .usage_voice = ids.usage_voice, .usage_upd = ids.usage_upd,
     };
     if (app_clock_start(application.ui, &clock_ids) == ESP_OK) {
         app_buddy_set_scene_handler(application.controller, on_scene, NULL);

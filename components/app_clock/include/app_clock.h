@@ -19,9 +19,10 @@ extern "C" {
 typedef struct {
     uint16_t clock_scene, clock_canvas;
     uint16_t timer_scene, timer_canvas, timer_digits, timer_sub, timer_reset;
+    uint16_t usage_scene, usage_canvas, usage_title, usage_money, usage_msub, usage_week, usage_voice, usage_upd;
 } app_clock_ids_t;
 
-/** Starts the world-timer and countdown-timer screens. */
+/** Starts the world-timer, countdown-timer and usage screens. */
 esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids);
 
 /** Tell the clock which scene is showing (drives repaint and touch). */

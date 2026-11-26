@@ -43,6 +43,9 @@ static struct {
     int64_t outstanding_until_us;
     char *resp;
     size_t resp_len;
+    volatile bool summary_wanted;
+    voice_summary_cb_t summary_cb;
+    void *summary_ctx;
 } b;
 
 static esp_err_t on_http(esp_http_client_event_t *e)
@@ -129,6 +132,15 @@ static void poll_results(void)
     cJSON_Delete(root);
 }
 
+static void fetch_summary(void)
+{
+    b.summary_wanted = false;
+    const int status = request(HTTP_METHOD_GET, "/summary", NULL);
+    if (b.summary_cb) {
+        b.summary_cb(status == 200 ? b.resp : NULL, b.summary_ctx);
+    }
+}
+
 static void bot_task(void *arg)
 {
     (void)arg;
@@ -144,6 +156,9 @@ static void bot_task(void *arg)
             heap_caps_free(j.task);
             next_poll_us = esp_timer_get_time() + (int64_t)POLL_ACTIVE_MS * 1000;
             continue;
+        }
+        if (b.summary_wanted && voice_wifi_wait_connected(0)) {
+            fetch_summary();
         }
         const int64_t now = esp_timer_get_time();
         if (now >= next_poll_us) {
@@ -199,4 +214,15 @@ bool voice_bot_send(const char *call_id, const char *task)
         return false;
     }
     return true;
+}
+
+void voice_bot_set_summary_cb(voice_summary_cb_t cb, void *ctx)
+{
+    b.summary_ctx = ctx;
+    b.summary_cb = cb;
+}
+
+void voice_bot_request_summary(void)
+{
+    b.summary_wanted = true;
 }

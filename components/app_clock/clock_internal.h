@@ -13,3 +13,10 @@ void timer_face_scene_changed(uint16_t scene_id);
 /** Touch while the timer screen shows; returns true to consume the sample. */
 bool timer_face_input(int32_t x, int32_t y, bool pressed);
 bool timer_face_active(void);
+
+/* Usage screen (Grok team usage, voice minutes). */
+typedef struct {
+    uint16_t scene, canvas, title, money, msub, week, voice, upd;
+} usage_face_ids_t;
+esp_err_t usage_face_start(esp_gsp_handle_t ui, const usage_face_ids_t *ids);
+void usage_face_scene_changed(uint16_t scene_id);

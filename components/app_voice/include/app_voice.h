@@ -29,6 +29,13 @@ void app_voice_set_asleep(bool asleep);
 /** Alarm ringing (repeating chime, conversation stopped) or stopped (Grok greets). */
 void app_voice_set_alarm(bool ringing, const char *label);
 
+/** Usage summary from the relay (GET /summary). The handler runs on the relay
+ * task with the JSON body, or NULL if the fetch failed. */
+typedef void (*app_voice_summary_cb_t)(const char *json, void *ctx);
+void app_voice_set_summary_handler(app_voice_summary_cb_t cb, void *ctx);
+/** Ask for a fresh summary soon (no-op without the relay). */
+void app_voice_request_summary(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -6,10 +6,12 @@
 //   GET  /voice    device WebSocket, proxied to xAI realtime with the key (see voice.js)
 //   GET  /usage    device: voice minutes used per day and the daily limit
 //   GET  /team-usage device: team spend summary via the Management API (usage.js)
+//   POST /team-usage helper (USAGE_TOKEN) -> relay: team usage numbers read on the owner's Mac
+//   GET  /summary  device: one small JSON for the usage screen (voice, bot tasks, team)
 //   GET  /health   open liveness check (no data)
 //
 // Secrets (wrangler secret put): DEVICE_TOKEN, BOT_TOKEN, XAI_API_KEY,
-// GROKBOT_WEBHOOK_URL, GROKBOT_WEBHOOK_KEY.
+// GROKBOT_WEBHOOK_URL, GROKBOT_WEBHOOK_KEY, optional USAGE_TOKEN.
 // DEVICE_TOKEN can send tasks and read results; BOT_TOKEN can only post results.
 // State lives in one SQLite-backed Durable Object so reads see writes immediately.
 
@@ -145,6 +147,28 @@ export default {
       return json(r, r.ok ? 200 : 429);
     }
 
+    if (url.pathname === "/team-usage" && req.method === "POST") {
+      if (!safeEqual(token, env.USAGE_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+      let body;
+      try { body = await readJson(req); } catch { return json({ ok: false, error: "bad json" }, 400); }
+      const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
+      const iso = (x) => (typeof x === "string" && x.length <= 40 ? x : null);
+      const team = {
+        month_used_usd: num(body.month_used_usd), month_limit_usd: num(body.month_limit_usd),
+        month_resets: iso(body.month_resets), week_pct: num(body.week_pct), week_resets: iso(body.week_resets),
+        tokens_month: num(body.tokens_month),
+      };
+      await stub.setTeam(JSON.stringify(team));
+      return json({ ok: true });
+    }
+
+    if (url.pathname === "/summary" && req.method === "GET") {
+      if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
+      const limitMin = dailyLimitSeconds(env) / 60;
+      const rate = Number(env.USD_PER_MINUTE || "0.08");
+      return json(await stub.summary(limitMin, rate));
+    }
+
     if (url.pathname === "/results" && req.method === "GET") {
       if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
       return json(await stub.takeResults());
@@ -165,6 +189,32 @@ export class Relay extends DurableObject {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS results (
       seq INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT, text TEXT, status TEXT,
       created INTEGER NOT NULL, delivered INTEGER NOT NULL DEFAULT 0)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL, at INTEGER NOT NULL)`);
+  }
+
+  setTeam(v) {
+    this.sql.exec("INSERT INTO kv (k, v, at) VALUES ('team', ?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, at = excluded.at",
+      v, Date.now());
+  }
+
+  summary(limitMin, rate) {
+    const row = this.sql.exec("SELECT secs FROM voice_usage WHERE day = ?", this.today()).toArray()[0];
+    const min = row ? row.secs / 60 : 0;
+    const midnight = Date.now() - this.secondsSinceMidnight() * 1000;
+    const team = this.sql.exec("SELECT v, at FROM kv WHERE k = 'team'").toArray()[0];
+    return {
+      ok: true,
+      voice_min: +min.toFixed(1), voice_limit_min: +limitMin.toFixed(0), voice_usd: +(min * rate).toFixed(2),
+      bot_tasks: this.countSince("tasks", midnight),
+      team: team ? { ...JSON.parse(team.v), age_s: Math.round((Date.now() - team.at) / 1000) } : null,
+    };
+  }
+
+  secondsSinceMidnight() {
+    const p = new Intl.DateTimeFormat("en-GB", { timeZone: this.tz, hour: "2-digit", minute: "2-digit",
+      second: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
+    const g = (t) => Number(p.find((x) => x.type === t).value);
+    return g("hour") * 3600 + g("minute") * 60 + g("second");
   }
 
   prune(now) {

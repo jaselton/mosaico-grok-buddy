@@ -437,6 +437,21 @@
         "min": 0,
         "max": 255
       }
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 40,
+      "y": 414,
+      "w": 400,
+      "h": 30,
+      "text": "",
+      "text_align": "center",
+      "overflow": "ellipsis",
+      "font_size": 19,
+      "fg_color": "#E8A03A",
+      "name": "vstatus",
+      "bind": "vstatus"
     }
   ]
 }

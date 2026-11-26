@@ -404,6 +404,8 @@ static void handle_message(const char *msg, size_t len)
             }
             cJSON_Delete(a);
         }
+    } else if (!strcmp(type, "session.created")) {
+        app_buddy_set_status(s.buddy, "");   /* reached Grok: clear any old warning */
     } else if (!strcmp(type, "session.updated")) {
         post(EV_SESSION_READY);
     } else if (!strcmp(type, "input_audio_buffer.speech_started")) {
@@ -433,8 +435,19 @@ static void handle_message(const char *msg, size_t len)
     } else if (!strcmp(type, "error")) {
         const cJSON *e = cJSON_GetObjectItemCaseSensitive(root, "error");
         const cJSON *code = e ? cJSON_GetObjectItemCaseSensitive(e, "code") : NULL;
+        const cJSON *msg = e ? cJSON_GetObjectItemCaseSensitive(e, "message") : NULL;
+        if (cJSON_IsString(code) && !strncmp(code->valuestring, "voice_", 6)) {
+            /* Relay: xAI refused the session (billing, key, rate limit, outage). */
+            ESP_LOGW(TAG, "voice unavailable: %s", code->valuestring);
+            app_buddy_set_status(s.buddy, cJSON_IsString(msg) ? msg->valuestring : "Grok voice is down");
+            app_buddy_express(s.buddy, APP_BUDDY_EXPR_SAD);
+            post(EV_ERROR);
+            cJSON_Delete(root);
+            return;
+        }
         if (cJSON_IsString(code) && !strcmp(code->valuestring, "daily_budget_exhausted")) {
             ESP_LOGW(TAG, "daily voice budget used up");
+            app_buddy_set_status(s.buddy, "daily voice limit reached");
             post(EV_BUDGET);
             cJSON_Delete(root);
             return;
@@ -561,10 +574,13 @@ static bool open_socket(void)
     }
     if (esp_timer_get_time() < s.budget_lock_until_us) {
         ESP_LOGW(TAG, "daily voice budget used up; not connecting");
+        app_buddy_set_status(s.buddy, "daily voice limit reached");
         return false;
     }
     if (!voice_wifi_wait_connected(3000)) {
         ESP_LOGW(TAG, "no Wi-Fi; can't reach Grok");
+        app_buddy_set_status(s.buddy, "no Wi-Fi");
+        app_buddy_express(s.buddy, APP_BUDDY_EXPR_SAD);
         return false;
     }
     esp_websocket_client_config_t cfg = {
@@ -1252,4 +1268,14 @@ esp_err_t app_voice_start(const app_voice_config_t *config)
     update_wake_enable();
     ESP_LOGI(TAG, "Grok voice ready: tap to talk%s", wake ? " or say \"Hey Grok\"" : "");
     return ESP_OK;
+}
+
+void app_voice_set_summary_handler(app_voice_summary_cb_t cb, void *ctx)
+{
+    voice_bot_set_summary_cb(cb, ctx);
+}
+
+void app_voice_request_summary(void)
+{
+    voice_bot_request_summary();
 }

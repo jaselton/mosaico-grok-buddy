@@ -61,3 +61,9 @@ typedef void (*voice_bot_cb_t)(voice_bot_event_t ev, const char *call_id, const 
 esp_err_t voice_bot_start(const char *base_url, const char *token, voice_bot_cb_t cb, void *ctx);
 /** Queue a task for the bot; false if the queue is full or out of memory. */
 bool voice_bot_send(const char *call_id, const char *task);
+
+/* Usage summary (relay GET /summary), fetched on the bot task. json is NULL on failure. */
+typedef void (*voice_summary_cb_t)(const char *json, void *ctx);
+void voice_bot_set_summary_cb(voice_summary_cb_t cb, void *ctx);
+void voice_bot_request_summary(void);
+

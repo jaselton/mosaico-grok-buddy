@@ -100,6 +100,14 @@ export function dailyLimitSeconds(env) {
   return Math.floor(Math.min(byMinutes, byDollars));
 }
 
+// Why xAI refused the session, in words short enough for the device's status line.
+function upstreamError(status) {
+  if (status === 402) return { code: "voice_billing", message: "Grok credits used up", status };
+  if (status === 401 || status === 403) return { code: "voice_key", message: "Grok API key rejected", status };
+  if (status === 429) return { code: "voice_rate_limited", message: "Grok is rate limiting", status };
+  return { code: "voice_unavailable", message: "Grok voice is down", status };
+}
+
 function safeSend(ws, data) {
   try { ws.send(data); } catch { /* peer already gone */ }
 }
@@ -140,11 +148,13 @@ export async function handleVoice(req, env, ctx, stub) {
     upstream = resp.webSocket;
     if (!upstream) {
       console.log(JSON.stringify({ ev: "upstream_failed", status: resp.status }));
+      safeSend(dev, JSON.stringify({ type: "error", error: upstreamError(resp.status) }));
       safeClose(dev, 1011, "upstream unavailable");
       return new Response(null, { status: 101, webSocket: client });
     }
   } catch (err) {
     console.log(JSON.stringify({ ev: "upstream_error", err: String(err) }));
+    safeSend(dev, JSON.stringify({ type: "error", error: upstreamError(0) }));
     safeClose(dev, 1011, "upstream unavailable");
     return new Response(null, { status: 101, webSocket: client });
   }

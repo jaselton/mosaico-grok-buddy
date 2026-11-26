@@ -29,6 +29,9 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
+#include "freertos/task.h"
 
 static const char *TAG = "app_clock";
 
@@ -443,6 +446,22 @@ static void read_battery(void)
     }
 }
 
+/* The gauge shares I2C with touch; a collision at boot can fail its setup and
+ * leave the reserve hand dead all session. Retry quietly in the background. */
+static void battery_retry_task(void *arg)
+{
+    (void)arg;
+    for (int i = 0; i < 6; ++i) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        if (bsp_battery_init() == ESP_OK) {
+            ESP_LOGI(TAG, "battery gauge online after retry %d", i + 1);
+            c.battery_read_us = 0;
+            break;
+        }
+    }
+    vTaskDeleteWithCaps(NULL);
+}
+
 /* ---------- canvas draw ---------- */
 
 static void draw_face(const esp_gsp_canvas_surface_t *surface, void *ctx)
@@ -632,6 +651,7 @@ void app_clock_scene_changed(uint16_t scene_id)
 {
     c.current_scene = scene_id;
     timer_face_scene_changed(scene_id);
+    usage_face_scene_changed(scene_id);
     if (scene_id == c.scene && c.ui && c.bg) {
         /* Binds are scene-scoped and the scene is rebuilt on arrival, so the
          * draw callback is (re)registered each time the clock is shown. */
@@ -656,6 +676,11 @@ esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids)
     c.ui = ui;
     c.bind = ids->clock_canvas;
     c.scene = ids->clock_scene;
+    const usage_face_ids_t uids = { ids->usage_scene, ids->usage_canvas, ids->usage_title, ids->usage_money,
+                                    ids->usage_msub, ids->usage_week, ids->usage_voice, ids->usage_upd };
+    if (usage_face_start(ui, &uids) != ESP_OK) {
+        ESP_LOGE(TAG, "usage screen unavailable");
+    }
     if (timer_face_start(ui, ids->timer_scene, ids->timer_canvas, ids->timer_digits, ids->timer_sub,
                          ids->timer_reset) != ESP_OK) {
         ESP_LOGE(TAG, "timer screen unavailable");
@@ -669,7 +694,9 @@ esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids)
     }
     memcpy(c.bg, c.dial, FW * FH * 2);
     if (bsp_battery_init() != ESP_OK) {
-        ESP_LOGW(TAG, "battery gauge unavailable; alarm reserve reads empty");
+        ESP_LOGW(TAG, "battery gauge unavailable; retrying in the background");
+        xTaskCreatePinnedToCoreWithCaps(battery_retry_task, "batt_retry", 4096, NULL, 2, NULL, tskNO_AFFINITY,
+                                        MALLOC_CAP_SPIRAM);
     }
     read_battery();
     {

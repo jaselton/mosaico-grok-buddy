@@ -753,6 +753,21 @@ void app_buddy_screen_ids(app_buddy_screen_ids_t *out)
     out->timer_digits = GSP_TIMER_BIND_TDIGITS;
     out->timer_sub = GSP_TIMER_BIND_TSUB;
     out->timer_reset = GSP_TIMER_BIND_TRESET;
+    out->usage_scene = GSP_BUNDLE_SCENE_USAGE;
+    out->usage_canvas = GSP_USAGE_BIND_UFACE;
+    out->usage_title = GSP_USAGE_BIND_UTITLE;
+    out->usage_money = GSP_USAGE_BIND_UMONEY;
+    out->usage_msub = GSP_USAGE_BIND_UMSUB;
+    out->usage_week = GSP_USAGE_BIND_UWEEK;
+    out->usage_voice = GSP_USAGE_BIND_UVOICE;
+    out->usage_upd = GSP_USAGE_BIND_UUPD;
+}
+
+void app_buddy_set_status(app_buddy_handle_t handle, const char *text)
+{
+    if (handle && handle->ui) {
+        esp_gsp_set_text(handle->ui, GSP_BUDDY_BIND_VSTATUS, text ? text : "");
+    }
 }
 
 void app_buddy_set_busy(app_buddy_handle_t handle, bool busy)

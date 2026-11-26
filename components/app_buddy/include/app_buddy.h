@@ -99,11 +99,15 @@ void app_buddy_set_scene_handler(app_buddy_handle_t handle, app_buddy_scene_cb_t
 typedef struct {
     uint16_t clock_scene, clock_canvas;
     uint16_t timer_scene, timer_canvas, timer_digits, timer_sub, timer_reset;
+    uint16_t usage_scene, usage_canvas, usage_title, usage_money, usage_msub, usage_week, usage_voice, usage_upd;
 } app_buddy_screen_ids_t;
 void app_buddy_screen_ids(app_buddy_screen_ids_t *out);
 
 /** Show slow dots under the idle eyes while a background task runs (any task). */
 void app_buddy_set_busy(app_buddy_handle_t handle, bool busy);
+
+/** One line under the eyes (e.g. why voice is unavailable); "" hides it. Any task. */
+void app_buddy_set_status(app_buddy_handle_t handle, const char *text);
 
 /** Route taps to cb instead of cycling states; NULL restores cycling.
  * Call from the UI loop or once right after create. */

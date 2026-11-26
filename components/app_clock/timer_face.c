@@ -200,14 +200,14 @@ static void draw_cb(const esp_gsp_canvas_surface_t *s, void *ctx)
     const float ka = (t.knob_deg - 90.0f) * (float)M_PI / 180.0f;
     const float kx = CX + R_ARC * cosf(ka), ky = CY + R_ARC * sinf(ka);
     draw_capsule(px, stride, x0, y0, w, h, kx, ky, kx, ky, 15.0f);
-    /* Eyes: tilted capsules that look toward the knob, with blinks */
+    /* Eyes: upright capsules that look toward the knob, with blinks */
     const float lx = t.look_x * 7.0f, ly = t.look_y * 6.0f;
     for (int e = 0; e < 2; ++e) {
         const float ex = (e ? 274.0f : 206.0f) + lx, ey = 140.0f + ly;
         if (t.blink) {
             draw_capsule(px, stride, x0, y0, w, h, ex - 12, ey + 6, ex + 12, ey + 6, 3.5f);
         } else {
-            draw_capsule(px, stride, x0, y0, w, h, ex - 6, ey - 12, ex + 6, ey + 12, 11.0f);
+            draw_capsule(px, stride, x0, y0, w, h, ex, ey - 10, ex, ey + 10, 12.0f);   /* upright, like the buddy */
         }
     }
 }
