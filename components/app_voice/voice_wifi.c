@@ -2,6 +2,8 @@
 /* Wi-Fi station: connect with Vibe Mode credentials and keep reconnecting.
  * An optional backup network (e.g. a phone hotspot) is tried after the current
  * one fails twice in a row, alternating until one connects. */
+#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_event.h"
@@ -24,7 +26,8 @@ static TimerHandle_t s_retry_timer;
 #define FAILS_BEFORE_SWITCH 2
 
 static uint32_t s_retry_ms = RETRY_MIN_MS;
-static wifi_config_t s_nets[3];
+static wifi_config_t s_nets[2];
+static char s_backup_name[33]; /* as typed; matched loosely against scans */
 static int s_net_count;
 static int s_net;
 static int s_fails;
@@ -40,14 +43,70 @@ static void fill_config(wifi_config_t *wc, const char *ssid, const char *passwor
     wc->sta.pmf_cfg.capable = true;
 }
 
+/* Lower-case ASCII and fold curly apostrophes to ' so "Sam's Iphone" matches
+ * the phone's broadcast "Sam’s iPhone". */
+static void fold(const uint8_t *in, size_t n, char *out, size_t cap)
+{
+    size_t o = 0;
+    for (size_t i = 0; i < n && in[i] && o + 1 < cap; ++i) {
+        if (i + 2 < n && in[i] == 0xE2 && in[i + 1] == 0x80 && (in[i + 2] == 0x98 || in[i + 2] == 0x99)) {
+            out[o++] = '\'';
+            i += 2;
+        } else {
+            out[o++] = (char)tolower(in[i]);
+        }
+    }
+    out[o] = '\0';
+}
+
+/* Scan finished while looking for the backup: adopt the visible SSID that
+ * matches loosely (exact bytes are required to join), then connect. */
+static void on_scan_done(void)
+{
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n > 40) {
+        n = 40;
+    }
+    wifi_ap_record_t *aps = n ? calloc(n, sizeof(*aps)) : NULL;
+    bool found = false;
+    if (aps && esp_wifi_scan_get_ap_records(&n, aps) == ESP_OK) {
+        char want[40], got[40];
+        fold((const uint8_t *)s_backup_name, strlen(s_backup_name), want, sizeof(want));
+        for (int i = 0; i < n && !found; ++i) {
+            fold(aps[i].ssid, sizeof(aps[i].ssid), got, sizeof(got));
+            if (!strcmp(want, got)) {
+                memset(s_nets[1].sta.ssid, 0, sizeof(s_nets[1].sta.ssid));
+                memcpy(s_nets[1].sta.ssid, aps[i].ssid, strnlen((const char *)aps[i].ssid, 32));
+                found = true;
+                ESP_LOGI(TAG, "backup network visible (rssi %d, ch %d, auth %d)", aps[i].rssi, aps[i].primary,
+                         aps[i].authmode);
+            }
+        }
+    } else {
+        esp_wifi_clear_ap_list();
+    }
+    free(aps);
+    if (!found) {
+        ESP_LOGW(TAG, "backup network not in scan (%u networks seen); trying its name anyway", n);
+    }
+    esp_wifi_set_config(WIFI_IF_STA, &s_nets[1]);
+    esp_wifi_connect();
+}
+
 static void retry_cb(TimerHandle_t t)
 {
     (void)t;
     if (s_switch) {
         s_switch = false;
         s_net = (s_net + 1) % s_net_count;
-        esp_wifi_set_config(WIFI_IF_STA, &s_nets[s_net]);
         ESP_LOGI(TAG, "trying %s network", s_net ? "backup" : "saved");
+        if (s_net == 1) {
+            if (esp_wifi_scan_start(NULL, false) == ESP_OK) {
+                return; /* connect from WIFI_EVENT_SCAN_DONE */
+            }
+        }
+        esp_wifi_set_config(WIFI_IF_STA, &s_nets[s_net]);
     }
     esp_wifi_connect();
 }
@@ -57,6 +116,10 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     (void)arg;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
+        if (s_net == 1) {
+            on_scan_done();
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *d = data;
         xEventGroupClearBits(s_events, BIT_CONNECTED);
@@ -117,17 +180,7 @@ esp_err_t voice_wifi_start(const char *ssid, const char *password, const char *b
     if (backup_ssid && backup_ssid[0]) {
         const char *bp = backup_password ? backup_password : "";
         fill_config(&s_nets[s_net_count++], backup_ssid, bp);
-        /* iPhones name hotspots with a curly apostrophe (John’s iPhone); also
-         * try that spelling when the name was typed with a straight one. */
-        const char *q = strchr(backup_ssid, '\'');
-        if (q) {
-            char alt[40];
-            size_t pre = (size_t)(q - backup_ssid);
-            int n = snprintf(alt, sizeof(alt), "%.*s\xE2\x80\x99%s", (int)pre, backup_ssid, q + 1);
-            if (n > 0 && n <= 32) {
-                fill_config(&s_nets[s_net_count++], alt, bp);
-            }
-        }
+        snprintf(s_backup_name, sizeof(s_backup_name), "%s", backup_ssid);
     }
     if (!s_net_count) {
         return ESP_ERR_NOT_FOUND;
