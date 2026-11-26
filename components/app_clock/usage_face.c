@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /*
- * Usage screen: Grok team spend this month (inner amber ring, $ in the
- * middle), weekly included usage (outer blue ring), and today's voice minutes.
+ * Usage screen: weekly included Grok usage % (big number, main blue ring),
+ * extra spend against the monthly cap (thin inner ring), today's voice minutes.
  *
  * Data comes from the relay's GET /summary (fetched on the voice relay task,
  * so no second TLS session competes for internal RAM). Team numbers are pushed
@@ -27,8 +27,8 @@ static const char *TAG = "usage_face";
 #define FW 480
 #define CX 240.0f
 #define CY 240.0f
-#define R_WEEK 205.0f
-#define R_MONTH 178.0f
+#define R_WEEK 204.0f
+#define R_MONTH 180.0f
 #define CORE 7.5f
 #define JSON_MAX 1024
 #define REFRESH_US (60LL * 1000 * 1000)
@@ -82,10 +82,10 @@ static inline uint16_t add(uint16_t dst, int r, int g, int b, float a)
 }
 
 /* One ring: dark track, then a glowing arc from 12 o'clock clockwise over frac. */
-static void ring(float radius, float frac, int r, int g, int b)
+static void ring(float radius, float core, float frac, int r, int g, int b)
 {
     const float span = (frac < 0 ? 0 : (frac > 1 ? 1 : frac)) * 360.0f;
-    const float band = CORE + 16.0f;
+    const float band = core + 16.0f;
     for (int y = 0; y < FW; ++y) {
         const float dy = y + 0.5f - CY;
         if (fabsf(dy) > radius + band) {
@@ -98,8 +98,8 @@ static void ring(float radius, float frac, int r, int g, int b)
                 continue;
             }
             uint16_t *p = &f.img[y * FW + x];
-            if (d < CORE + 0.5f) {
-                *p = mix(*p, 30, 34, 44, CORE + 0.5f - d);
+            if (d < core + 0.5f) {
+                *p = mix(*p, 26, 30, 38, core + 0.5f - d);
             }
             if (span <= 0) {
                 continue;
@@ -111,10 +111,10 @@ static void ring(float radius, float frac, int r, int g, int b)
                 off = fminf(a - span, 360.0f - a) * radius * (float)M_PI / 180.0f;
             }
             const float dist = sqrtf(d * d + off * off);
-            if (dist < CORE + 0.5f) {
-                *p = mix(*p, r, g, b, CORE + 0.5f - dist);
+            if (dist < core + 0.5f) {
+                *p = mix(*p, r, g, b, core + 0.5f - dist);
             } else {
-                *p = add(*p, r, g, b, 0.35f * expf(-(dist - CORE) / 6.0f));
+                *p = add(*p, r, g, b, 0.35f * expf(-(dist - core) / 6.0f));
             }
         }
     }
@@ -126,11 +126,12 @@ static void render(void)
     const bool team = f.have && f.u.has_team;
     const float week = team ? f.u.week_pct / 100.0f : 0;
     const float month = team && f.u.month_limit > 0 ? f.u.month_used / f.u.month_limit : 0;
-    ring(R_WEEK, week, 90, 180, 255);
+    /* Main ring: weekly included usage. Thin inner ring: extra spend vs the cap. */
+    ring(R_WEEK, 10.0f, week, 90, 180, 255);
     if (month >= 0.95f) {
-        ring(R_MONTH, month, 226, 70, 58);   /* at or near the cap: red */
+        ring(R_MONTH, 3.0f, month, 226, 70, 58);
     } else {
-        ring(R_MONTH, month, 232, 160, 58);
+        ring(R_MONTH, 3.0f, month, 232, 160, 58);
     }
 }
 
@@ -218,7 +219,7 @@ static void fmt_when(char *out, size_t len, time_t when)
     localtime_r(&when, &a);
     localtime_r(&now, &b);
     char hm[16];
-    strftime(hm, sizeof(hm), "%I:%M %p", &a);
+    strftime(hm, sizeof(hm), a.tm_min ? "%I:%M %p" : "%I %p", &a);   /* "6 PM", "2:29 PM" */
     const char *h = hm[0] == '0' ? hm + 1 : hm;
     if (a.tm_yday == b.tm_yday && a.tm_year == b.tm_year) {
         snprintf(out, len, "%s", h);
@@ -244,28 +245,29 @@ static void update_labels(void)
         return;
     }
     if (u->has_team) {
-        fmt_money(buf, sizeof(buf), u->month_used);
+        snprintf(buf, sizeof(buf), "%d%%", (int)lroundf(u->week_pct));
         esp_gsp_set_text(f.ui, f.id.money, buf);
-        char lim[16];
+        fmt_when(w1, sizeof(w1), u->week_resets);
+        snprintf(buf, sizeof(buf), "of weekly plan · resets %s", w1);
+        esp_gsp_set_text(f.ui, f.id.msub, buf);
+        char used[16], lim[16];
+        fmt_money(used, sizeof(used), u->month_used);
         fmt_money(lim, sizeof(lim), u->month_limit);
         fmt_when(w1, sizeof(w1), u->month_resets);
-        snprintf(buf, sizeof(buf), "of %s · resets %s", lim, w1);
-        esp_gsp_set_text(f.ui, f.id.msub, buf);
-        fmt_when(w1, sizeof(w1), u->week_resets);
-        snprintf(buf, sizeof(buf), "weekly %d%% · resets %s", (int)lroundf(u->week_pct), w1);
+        snprintf(buf, sizeof(buf), "extra %s/%s, resets %s", used, lim, w1);
         esp_gsp_set_text(f.ui, f.id.week, buf);
     } else {
         esp_gsp_set_text(f.ui, f.id.money, "--");
         esp_gsp_set_text(f.ui, f.id.msub, "team numbers not in yet");
         esp_gsp_set_text(f.ui, f.id.week, "");
     }
-    snprintf(buf, sizeof(buf), "voice %d / %d min · $%.2f", (int)lroundf(u->voice_min), (int)lroundf(u->voice_limit),
+    snprintf(buf, sizeof(buf), "voice %d/%d min today, $%.2f", (int)lroundf(u->voice_min), (int)lroundf(u->voice_limit),
              u->voice_usd < 0 ? 0 : u->voice_usd);
     esp_gsp_set_text(f.ui, f.id.voice, buf);
     if (u->has_team && u->age_s > 3600) {
-        snprintf(buf, sizeof(buf), "team numbers %d h old (Mac helper?)", u->age_s / 3600);
+        snprintf(buf, sizeof(buf), "usage %d h old, check Mac", u->age_s / 3600);
     } else if (u->has_team) {
-        snprintf(buf, sizeof(buf), "%d bot task%s today · updated %d min ago", u->bot_tasks,
+        snprintf(buf, sizeof(buf), "%d bot task%s, updated %dm ago", u->bot_tasks,
                  u->bot_tasks == 1 ? "" : "s", u->age_s / 60);
     } else {
         snprintf(buf, sizeof(buf), "%d bot task%s today", u->bot_tasks, u->bot_tasks == 1 ? "" : "s");
