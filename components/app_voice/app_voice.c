@@ -19,7 +19,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "app_alarm.h"
 #include "app_config.h"
+#include "app_wake.h"
 #include "sdkconfig.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -36,7 +38,8 @@
 
 static const char *TAG = "app_voice";
 
-#define REALTIME_URI   "wss://api.x.ai/v1/realtime?model=grok-voice-latest"
+#define REALTIME_MODEL "grok-voice-3.0"   /* pinned: price and behaviour change only on purpose */
+#define REALTIME_URI   "wss://api.x.ai/v1/realtime?model=" REALTIME_MODEL
 #define DEFAULT_VOICE  "eve"
 #define API_KEY_MAX    192
 #define VOICE_ID_MAX   32
@@ -68,6 +71,20 @@ static const char *TAG = "app_voice";
     "arrives, which can take a few minutes. Don't use the tool for chit-chat or "  \
     "general knowledge you can answer yourself."
 
+#define ATTENTION_PREFIX                                                            \
+    "[" BOT_NAME ", " OWNER "'s Grok Bot, is waiting on " OWNER " for something in the " \
+    "Grok Bot app. Tell " OWNER " now, in one or two short sentences, what is waiting " \
+    "and that it needs them in the app. Don't add new information.]\n\n"
+
+#define ALARM_INSTRUCTIONS                                                          \
+    " You can set wake-up alarms on this device: when asked, call set_alarm with "  \
+    "the local time in 24-hour HH:MM (and a short label if one was given); call "   \
+    "cancel_alarms to clear them. Confirm briefly using the time the tool returns."
+
+#define GREETING_PREFIX                                                             \
+    "[" OWNER "'s alarm just rang and they switched it off. Greet them in one short, " \
+    "warm, upbeat sentence; mention the alarm label if there is one.]\n\n"
+
 #define ANNOUNCE_PREFIX                                                             \
     "[Message from " BOT_NAME ", " OWNER "'s Grok Bot. Read it to " OWNER " now in " \
     "your own voice, briefly and naturally, starting with something like '"         \
@@ -84,10 +101,18 @@ typedef enum {
     EV_AUDIO,
     EV_RESPONSE_DONE,
     EV_ERROR,
+    EV_BUDGET,          /* relay: daily voice budget used up */
+    EV_SLEEP,           /* laid face-down */
+    EV_WAKE_WORD,       /* "Hi Grok" heard */
+    EV_LOCAL_TOOL,      /* text = "name\nargs-json", call_id set */
+    EV_ALARM_RING,      /* text = label */
+    EV_ALARM_STOP,      /* text = label */
+    EV_WAKE,            /* picked up */
     EV_TOOL_CALL,       /* text = task, call_id set */
     EV_TOOL_SENT,       /* call_id set */
     EV_TOOL_FAILED,     /* call_id set */
     EV_BOT_RESULT,      /* text = bot answer */
+    EV_BOT_ATTENTION,   /* text = what the bot is waiting on */
 } event_t;
 
 /* Queue item; text (if any) is heap-owned by the receiver. */
@@ -111,7 +136,13 @@ static struct {
     app_buddy_handle_t buddy;
     QueueHandle_t q;
     esp_websocket_client_handle_t ws;
+    char uri[192];           /* relay /voice (preferred) or xAI realtime (direct) */
     char auth_header[API_KEY_MAX + 32];
+    bool via_relay;
+    int64_t budget_lock_until_us;   /* daily budget spent: no voice until then */
+    bool asleep;                    /* face-down: mic off, taps ignored */
+    bool alarm_ringing;
+    int64_t next_chime_us;
     char voice[VOICE_ID_MAX];
     vstate_t state;
     bool ready;              /* session.updated received on the open socket */
@@ -130,9 +161,15 @@ static struct {
     /* Grok Bot hand-off (control task). */
     bool bot_enabled;
     bool tool_pending;       /* waiting for the relay to accept a tool call */
-    char *announce[MAX_ANNOUNCE];
+    char *announce[MAX_ANNOUNCE];   /* leading ATTN_MARK = attention notice */
     int announce_count;
+    int pending_tasks;              /* tasks handed to the bot, not yet answered */
+    int64_t pending_since_us;
 } s;
+
+#define ATTN_MARK '\x01'
+#define GREET_MARK '\x02'
+#define PENDING_MAX_MS (20 * 60 * 1000)
 
 static char *dup_psram(const char *src)
 {
@@ -183,6 +220,8 @@ static void face(app_buddy_state_t st)
     app_buddy_request_state(s.buddy, st);
 }
 
+static void update_wake_enable(void);
+
 static void set_state(vstate_t st)
 {
     if (st != s.state) {
@@ -206,6 +245,21 @@ static void set_state(vstate_t st)
         face(APP_BUDDY_SPEAKING);
         break;
     }
+    update_wake_enable();
+}
+
+/* Listen for the wake word only when idle, awake and within budget (half duplex:
+ * never while the speaker might be talking). */
+static void update_wake_enable(void)
+{
+    app_wake_set_enabled(s.state == V_IDLE && !s.asleep && !s.alarm_ringing &&
+                         esp_timer_get_time() >= s.budget_lock_until_us && !voice_audio_playing());
+}
+
+static void on_wake_word(void *ctx)
+{
+    (void)ctx;
+    post(EV_WAKE_WORD);
 }
 
 static bool send_json(const char *json)
@@ -264,7 +318,16 @@ static void handle_message(const char *msg, size_t len)
         const cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
         const cJSON *call_id = cJSON_GetObjectItemCaseSensitive(root, "call_id");
         const cJSON *args = cJSON_GetObjectItemCaseSensitive(root, "arguments");
-        if (cJSON_IsString(name) && !strcmp(name->valuestring, "ask_grok_bot") && cJSON_IsString(args)) {
+        if (cJSON_IsString(name) && cJSON_IsString(args) &&
+                (!strcmp(name->valuestring, "set_alarm") || !strcmp(name->valuestring, "cancel_alarms"))) {
+            const size_t n = strlen(name->valuestring) + strlen(args->valuestring) + 2;
+            char *t = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (t) {
+                snprintf(t, n, "%s\n%s", name->valuestring, args->valuestring);
+                post_msg(EV_LOCAL_TOOL, t, cJSON_IsString(call_id) ? call_id->valuestring : "");
+                heap_caps_free(t);
+            }
+        } else if (cJSON_IsString(name) && !strcmp(name->valuestring, "ask_grok_bot") && cJSON_IsString(args)) {
             cJSON *a = cJSON_Parse(args->valuestring);
             const cJSON *task = a ? cJSON_GetObjectItemCaseSensitive(a, "task") : NULL;
             if (cJSON_IsString(task) && task->valuestring[0]) {
@@ -295,6 +358,14 @@ static void handle_message(const char *msg, size_t len)
             ESP_LOGI(TAG, "heard: %.200s", t->valuestring);
         }
     } else if (!strcmp(type, "error")) {
+        const cJSON *e = cJSON_GetObjectItemCaseSensitive(root, "error");
+        const cJSON *code = e ? cJSON_GetObjectItemCaseSensitive(e, "code") : NULL;
+        if (cJSON_IsString(code) && !strcmp(code->valuestring, "daily_budget_exhausted")) {
+            ESP_LOGW(TAG, "daily voice budget used up");
+            post(EV_BUDGET);
+            cJSON_Delete(root);
+            return;
+        }
         char *txt = cJSON_PrintUnformatted(root);
         ESP_LOGE(TAG, "server error: %.300s", txt ? txt : "?");
         cJSON_free(txt);
@@ -415,12 +486,16 @@ static bool open_socket(void)
     if (s.ws) {
         return true;
     }
+    if (esp_timer_get_time() < s.budget_lock_until_us) {
+        ESP_LOGW(TAG, "daily voice budget used up; not connecting");
+        return false;
+    }
     if (!voice_wifi_wait_connected(3000)) {
         ESP_LOGW(TAG, "no Wi-Fi; can't reach Grok");
         return false;
     }
     esp_websocket_client_config_t cfg = {
-        .uri = REALTIME_URI,
+        .uri = s.uri,
         .headers = s.auth_header,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = 8192,
@@ -467,13 +542,54 @@ static void send_session_update(void)
     cJSON_AddStringToObject(o, "type", "session.update");
     cJSON *ss = cJSON_AddObjectToObject(o, "session");
     cJSON_AddStringToObject(ss, "voice", s.voice);
-    cJSON_AddStringToObject(ss, "instructions", s.bot_enabled ? INSTRUCTIONS BOT_INSTRUCTIONS : INSTRUCTIONS);
+    cJSON_AddStringToObject(cJSON_AddObjectToObject(ss, "reasoning"), "effort", "none");   /* fastest turns */
+    {
+        char now[64];
+        app_alarm_format_now(now, sizeof(now));
+        const char *base = s.bot_enabled ? INSTRUCTIONS BOT_INSTRUCTIONS ALARM_INSTRUCTIONS
+                                         : INSTRUCTIONS ALARM_INSTRUCTIONS;
+        const size_t n = strlen(base) + strlen(now) + 48;
+        char *ins = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (ins) {
+            snprintf(ins, n, "%s Current local date and time: %s.", base, now);
+            cJSON_AddStringToObject(ss, "instructions", ins);
+            heap_caps_free(ins);
+        } else {
+            cJSON_AddStringToObject(ss, "instructions", base);
+        }
+    }
     cJSON_AddStringToObject(cJSON_AddObjectToObject(ss, "turn_detection"), "type", "server_vad");
     cJSON *audio = cJSON_AddObjectToObject(ss, "audio");
     cJSON_AddItemToObject(cJSON_AddObjectToObject(audio, "input"), "format", pcm_format(VOICE_UPLINK_RATE));
     cJSON_AddItemToObject(cJSON_AddObjectToObject(audio, "output"), "format", pcm_format(VOICE_DOWNLINK_RATE));
+    cJSON *tools = cJSON_AddArrayToObject(ss, "tools");
+    {
+        cJSON *t = cJSON_CreateObject();
+        cJSON_AddStringToObject(t, "type", "function");
+        cJSON_AddStringToObject(t, "name", "set_alarm");
+        cJSON_AddStringToObject(t, "description", "Set a one-shot wake-up alarm on this device at the next "
+                                                  "occurrence of a local time.");
+        cJSON *params = cJSON_AddObjectToObject(t, "parameters");
+        cJSON_AddStringToObject(params, "type", "object");
+        cJSON *props = cJSON_AddObjectToObject(params, "properties");
+        cJSON *time_p = cJSON_AddObjectToObject(props, "time");
+        cJSON_AddStringToObject(time_p, "type", "string");
+        cJSON_AddStringToObject(time_p, "description", "Local time, 24-hour HH:MM, e.g. 06:30");
+        cJSON *label = cJSON_AddObjectToObject(props, "label");
+        cJSON_AddStringToObject(label, "type", "string");
+        cJSON_AddStringToObject(label, "description", "Optional short label, e.g. gym");
+        cJSON_AddItemToArray(cJSON_AddArrayToObject(params, "required"), cJSON_CreateString("time"));
+        cJSON_AddItemToArray(tools, t);
+        cJSON *c = cJSON_CreateObject();
+        cJSON_AddStringToObject(c, "type", "function");
+        cJSON_AddStringToObject(c, "name", "cancel_alarms");
+        cJSON_AddStringToObject(c, "description", "Cancel all pending alarms on this device.");
+        cJSON *cp = cJSON_AddObjectToObject(c, "parameters");
+        cJSON_AddStringToObject(cp, "type", "object");
+        cJSON_AddObjectToObject(cp, "properties");
+        cJSON_AddItemToArray(tools, c);
+    }
     if (s.bot_enabled) {
-        cJSON *tools = cJSON_AddArrayToObject(ss, "tools");
         cJSON *t = cJSON_CreateObject();
         cJSON_AddStringToObject(t, "type", "function");
         cJSON_AddStringToObject(t, "name", "ask_grok_bot");
@@ -510,12 +626,18 @@ static void send_tool_output(const char *call_id, const char *output)
 /* Ask Grok to read a bot answer aloud. Requires a ready session. */
 static void speak_announcement(const char *text)
 {
-    const size_t n = strlen(ANNOUNCE_PREFIX) + strlen(text) + 1;
+    const bool attention = text[0] == ATTN_MARK;
+    const bool greeting = text[0] == GREET_MARK;
+    const char *prefix = attention ? ATTENTION_PREFIX : greeting ? GREETING_PREFIX : ANNOUNCE_PREFIX;
+    if (attention || greeting) {
+        ++text;
+    }
+    const size_t n = strlen(prefix) + strlen(text) + 1;
     char *msg = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!msg) {
         return;
     }
-    snprintf(msg, n, "%s%s", ANNOUNCE_PREFIX, text);
+    snprintf(msg, n, "%s%s", prefix, text);
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "type", "conversation.item.create");
     cJSON *item = cJSON_AddObjectToObject(o, "item");
@@ -528,7 +650,12 @@ static void speak_announcement(const char *text)
     cJSON_AddItemToArray(content, part);
     heap_caps_free(msg);
     send_cjson(o);
-    voice_audio_chime();
+    if (!greeting) {
+        voice_audio_chime();
+    }
+    if (attention) {
+        voice_audio_chime();   /* double chime: something is waiting on you */
+    }
     s.response_done = false;
     set_state(V_THINKING);
     send_json("{\"type\":\"response.create\"}");
@@ -536,7 +663,7 @@ static void speak_announcement(const char *text)
 
 static void announce_next_if_ready(void)
 {
-    if (!s.announce_count || s.state != V_IDLE || voice_audio_playing()) {
+    if (!s.announce_count || s.asleep || s.alarm_ringing || s.state != V_IDLE || voice_audio_playing()) {
         return;
     }
     if (!s.ready) {
@@ -570,6 +697,9 @@ static void on_bot_event(voice_bot_event_t ev, const char *call_id, const char *
     case VOICE_BOT_RESULT:
         post_msg(EV_BOT_RESULT, text, NULL);
         break;
+    case VOICE_BOT_ATTENTION:
+        post_msg(EV_BOT_ATTENTION, text, NULL);
+        break;
     }
 }
 
@@ -594,7 +724,95 @@ static void on_event(const msg_t *m)
 {
     const event_t ev = m->ev;
     switch (ev) {
+    case EV_SLEEP:
+        s.asleep = true;
+        app_wake_set_enabled(false);
+        if (s.state == V_SPEAKING || s.state == V_THINKING) {
+            atomic_store(&s.discard, true);
+            send_json("{\"type\":\"response.cancel\"}");
+        }
+        voice_audio_flush_playback();
+        close_socket();
+        stop_turn_to_idle();
+        break;
+    case EV_WAKE:
+        s.asleep = false;
+        update_wake_enable();
+        s.last_activity_us = esp_timer_get_time();
+        announce_next_if_ready();
+        break;
+    case EV_LOCAL_TOOL: {
+        char out[160] = "";
+        char *nl = m->text ? strchr(m->text, '\n') : NULL;
+        if (nl) {
+            *nl = '\0';
+            if (!strcmp(m->text, "cancel_alarms")) {
+                snprintf(out, sizeof(out), "{\"cancelled\":%d}", app_alarm_cancel_all());
+            } else {
+                cJSON *a = cJSON_Parse(nl + 1);
+                const cJSON *tm = a ? cJSON_GetObjectItemCaseSensitive(a, "time") : NULL;
+                const cJSON *lb = a ? cJSON_GetObjectItemCaseSensitive(a, "label") : NULL;
+                int hh = -1, mm = -1;
+                char when[48] = "";
+                if (cJSON_IsString(tm) && sscanf(tm->valuestring, "%d:%d", &hh, &mm) == 2) {
+                    const esp_err_t e = app_alarm_set(hh, mm, cJSON_IsString(lb) ? lb->valuestring : "",
+                                                      when, sizeof(when));
+                    if (e == ESP_OK) {
+                        snprintf(out, sizeof(out), "{\"status\":\"set\",\"rings\":\"%s\"}", when);
+                    } else {
+                        snprintf(out, sizeof(out), "{\"status\":\"failed\",\"reason\":\"%s\"}",
+                                 e == ESP_ERR_INVALID_STATE ? "clock not set yet" :
+                                 e == ESP_ERR_NO_MEM ? "too many alarms (max 4)" : "bad time");
+                    }
+                } else {
+                    snprintf(out, sizeof(out), "{\"status\":\"failed\",\"reason\":\"time must be HH:MM\"}");
+                }
+                cJSON_Delete(a);
+            }
+        }
+        send_tool_output(m->call_id, out[0] ? out : "{\"status\":\"failed\"}");
+        break;
+    }
+    case EV_ALARM_RING:
+        /* Stop any conversation; the alarm owns the speaker until dismissed. */
+        if (s.state == V_SPEAKING || s.state == V_THINKING) {
+            atomic_store(&s.discard, true);
+            send_json("{\"type\":\"response.cancel\"}");
+        }
+        voice_audio_flush_playback();
+        stop_turn_to_idle();
+        s.alarm_ringing = true;
+        s.next_chime_us = 0;
+        break;
+    case EV_ALARM_STOP:
+        s.alarm_ringing = false;
+        voice_audio_flush_playback();
+        if (s.announce_count < MAX_ANNOUNCE) {
+            const size_t n = (m->text ? strlen(m->text) : 0) + 2;
+            char *t = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (t) {
+                snprintf(t, n, "\x02%s", m->text ? m->text : "");
+                s.announce[s.announce_count++] = t;
+            }
+        }
+        announce_next_if_ready();
+        break;
+    case EV_WAKE_WORD:
+        if (s.asleep || s.state != V_IDLE) {
+            break;
+        }
+        app_buddy_react(s.buddy, APP_BUDDY_REACT_STARTLE);
+        if (open_socket()) {
+            start_listening();
+        }
+        break;
     case EV_TAP:
+        if (app_alarm_dismiss()) {
+            break;   /* a tap silences a ringing alarm */
+        }
+        if (s.asleep) {
+            break;
+        }
         if (s.state == V_SPEAKING || s.state == V_THINKING) {
             /* Barge in: stop Grok and listen again. */
             atomic_store(&s.discard, true);
@@ -657,6 +875,13 @@ static void on_event(const msg_t *m)
             set_state(V_IDLE);   /* response without audio */
         }
         break;
+    case EV_BUDGET:
+        /* Re-check after 30 min; the relay resets the budget at local midnight. */
+        s.budget_lock_until_us = esp_timer_get_time() + 30LL * 60 * 1000 * 1000;
+        atomic_store(&s.uplink, false);
+        voice_audio_capture_end();
+        set_state(V_IDLE);
+        break;
     case EV_ERROR:
         if (s.state == V_CONNECTING || s.state == V_THINKING) {
             stop_turn_to_idle();
@@ -674,6 +899,9 @@ static void on_event(const msg_t *m)
         break;
     case EV_TOOL_SENT:
         s.tool_pending = false;
+        s.pending_tasks++;
+        s.pending_since_us = esp_timer_get_time();
+        app_buddy_set_busy(s.buddy, true);
         send_tool_output(m->call_id,
                          "{\"status\":\"sent\",\"note\":\"" BOT_NAME " is working on it; its answer "
                          "will be read aloud when it arrives.\"}");
@@ -683,10 +911,19 @@ static void on_event(const msg_t *m)
         send_tool_output(m->call_id, "{\"status\":\"failed\",\"reason\":\"couldn't reach " BOT_NAME "\"}");
         break;
     case EV_BOT_RESULT:
+    case EV_BOT_ATTENTION:
+        if (ev == EV_BOT_RESULT && s.pending_tasks > 0 && --s.pending_tasks == 0) {
+            app_buddy_set_busy(s.buddy, false);
+        }
         if (s.announce_count < MAX_ANNOUNCE && m->text) {
-            s.announce[s.announce_count++] = dup_psram(m->text);
+            const size_t n = strlen(m->text) + 2;
+            char *t = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (t) {
+                snprintf(t, n, "%s%s", ev == EV_BOT_ATTENTION ? "\x01" : "", m->text);
+                s.announce[s.announce_count++] = t;
+            }
         } else {
-            ESP_LOGW(TAG, "dropping bot answer; announcement queue full");
+            ESP_LOGW(TAG, "dropping bot message; announcement queue full");
         }
         announce_next_if_ready();
         break;
@@ -705,6 +942,17 @@ static void on_event(const msg_t *m)
 static void on_tick(void)
 {
     const int64_t now = esp_timer_get_time();
+    update_wake_enable();   /* playback ending or budget lock expiring re-arms it */
+    if (s.alarm_ringing && now >= s.next_chime_us) {
+        voice_audio_chime();
+        voice_audio_chime();
+        s.next_chime_us = now + 1500LL * 1000;
+    }
+    if (s.pending_tasks && (now - s.pending_since_us) / 1000 > PENDING_MAX_MS) {
+        ESP_LOGW(TAG, "no answer from %s after 20 min; clearing busy", BOT_NAME);
+        s.pending_tasks = 0;
+        app_buddy_set_busy(s.buddy, false);
+    }
     const int64_t in_state_ms = (now - s.state_since_us) / 1000;
     switch (s.state) {
     case V_CONNECTING:
@@ -783,6 +1031,16 @@ static bool load_embedded(const char *start, const char *end, char *out, size_t 
     return true;
 }
 
+void app_voice_set_asleep(bool asleep)
+{
+    post(asleep ? EV_SLEEP : EV_WAKE);
+}
+
+void app_voice_set_alarm(bool ringing, const char *label)
+{
+    post_msg(ringing ? EV_ALARM_RING : EV_ALARM_STOP, label, NULL);
+}
+
 esp_err_t app_voice_start(const app_voice_config_t *config)
 {
     if (!config || !config->buddy) {
@@ -790,20 +1048,32 @@ esp_err_t app_voice_start(const app_voice_config_t *config)
     }
     s.buddy = config->buddy;
 
-    char key[API_KEY_MAX];
-    esp_err_t err = app_config_load_secret(APP_VOICE_KEY_API_KEY, key, sizeof(key));
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "using API key from Vibe Mode shared settings");
-    } else if (load_embedded(xai_key_start, xai_key_end, key, sizeof(key))) {
-        ESP_LOGI(TAG, "using build-time API key");
-        err = ESP_OK;
+    /* Preferred: voice through the relay, which holds the xAI key (none on the board).
+     * Fallback: connect to xAI directly with a key from Vibe Mode or secrets/. */
+    char relay_url[128];
+    char relay_token[96] = { 0 };
+    const bool relay = load_embedded(relay_url_start, relay_url_end, relay_url, sizeof(relay_url)) &&
+                       load_embedded(relay_token_start, relay_token_end, relay_token, sizeof(relay_token));
+    esp_err_t err = ESP_OK;
+    if (relay) {
+        const char *host = strstr(relay_url, "://");
+        snprintf(s.uri, sizeof(s.uri), "wss://%s/voice", host ? host + 3 : relay_url);
+        snprintf(s.auth_header, sizeof(s.auth_header), "Authorization: Bearer %s\r\n", relay_token);
+        s.via_relay = true;
+        ESP_LOGI(TAG, "voice via relay (no API key on the device)");
     } else {
-        ESP_LOGW(TAG, "no '%s' in Vibe Mode shared settings (%s) and no build-time key; voice disabled",
-                 APP_VOICE_KEY_API_KEY, esp_err_to_name(err));
-        return ESP_ERR_NOT_FOUND;
+        char key[API_KEY_MAX];
+        err = app_config_load_secret(APP_VOICE_KEY_API_KEY, key, sizeof(key));
+        if (err != ESP_OK && !load_embedded(xai_key_start, xai_key_end, key, sizeof(key))) {
+            ESP_LOGW(TAG, "no relay and no xAI key ('%s' in Vibe Mode or secrets/); voice disabled",
+                     APP_VOICE_KEY_API_KEY);
+            return ESP_ERR_NOT_FOUND;
+        }
+        snprintf(s.uri, sizeof(s.uri), "%s", REALTIME_URI);
+        snprintf(s.auth_header, sizeof(s.auth_header), "Authorization: Bearer %s\r\n", key);
+        mbedtls_platform_zeroize(key, sizeof(key));
+        ESP_LOGI(TAG, "voice direct to xAI (key on the device)");
     }
-    snprintf(s.auth_header, sizeof(s.auth_header), "Authorization: Bearer %s\r\n", key);
-    mbedtls_platform_zeroize(key, sizeof(key));
     if (app_config_load_secret(APP_VOICE_KEY_VOICE, s.voice, sizeof(s.voice)) != ESP_OK) {
         strcpy(s.voice, DEFAULT_VOICE);
     }
@@ -833,19 +1103,18 @@ esp_err_t app_voice_start(const app_voice_config_t *config)
     }
     s.state = V_IDLE;
     s.state_since_us = s.last_activity_us = esp_timer_get_time();
-    if (xTaskCreate(control_task, "voice_ctl", 6144, NULL, 5, NULL) != pdPASS ||
-            xTaskCreate(uplink_task, "voice_up", 6144, NULL, 5, NULL) != pdPASS) {
+    if (xTaskCreateWithCaps(control_task, "voice_ctl", 6144, NULL, 5, NULL, MALLOC_CAP_SPIRAM) != pdPASS ||
+            xTaskCreateWithCaps(uplink_task, "voice_up", 6144, NULL, 5, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
-    char relay_url[128];
-    char relay_token[96];
-    if (load_embedded(relay_url_start, relay_url_end, relay_url, sizeof(relay_url)) &&
-            load_embedded(relay_token_start, relay_token_end, relay_token, sizeof(relay_token))) {
+    if (relay) {
         s.bot_enabled = voice_bot_start(relay_url, relay_token, on_bot_event, NULL) == ESP_OK;
     }
     mbedtls_platform_zeroize(relay_token, sizeof(relay_token));
     ESP_LOGI(TAG, "%s hand-off %s", BOT_NAME, s.bot_enabled ? "enabled" : "not configured");
     app_buddy_set_tap_handler(s.buddy, on_tap, NULL);
-    ESP_LOGI(TAG, "Grok voice ready: tap to talk");
+    const bool wake = app_wake_start(on_wake_word, NULL) == ESP_OK;
+    update_wake_enable();
+    ESP_LOGI(TAG, "Grok voice ready: tap to talk%s", wake ? " or say \"Hi Grok\"" : "");
     return ESP_OK;
 }

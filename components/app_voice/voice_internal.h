@@ -48,6 +48,7 @@ typedef enum {
     VOICE_BOT_SENT,          /* call_id: task accepted by the relay */
     VOICE_BOT_SEND_FAILED,   /* call_id: relay or Wi-Fi unavailable */
     VOICE_BOT_RESULT,        /* text: the bot's spoken answer */
+    VOICE_BOT_ATTENTION,     /* text: the bot is waiting on the owner (card, choice) */
 } voice_bot_event_t;
 
 /** Called on the relay task; must copy text and return quickly. */

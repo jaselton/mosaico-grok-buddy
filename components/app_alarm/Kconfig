@@ -1,0 +1,11 @@
+menu "Grok desk buddy alarms"
+
+    config GROK_BUDDY_TZ
+        string "Time zone (POSIX TZ)"
+        default "UTC0"
+        help
+            Local time for alarms, e.g. "CST6CDT,M3.2.0,M11.1.0" (US Central)
+            or "PST8PDT,M3.2.0,M11.1.0". Put personal values in the git-ignored
+            sdkconfig.local.defaults.
+
+endmenu

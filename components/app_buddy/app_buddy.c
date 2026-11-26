@@ -30,6 +30,10 @@
 
 enum { F_OPEN = 0, F_THINK, F_B1, F_B2, F_B3 };
 
+#define DIZZY_MS   2600
+#define HAPPY_MS   2200
+#define STARTLE_MS 900
+
 typedef esp_gsp_err_t (*vis_fn_t)(esp_gsp_handle_t, bool);
 
 static const vis_fn_t s_left[FRAME_COUNT] = {
@@ -90,9 +94,22 @@ struct app_buddy {
     atomic_int pending_state;
     atomic_int level;            /* 0..255 */
     atomic_bool has_level;
+    atomic_bool busy;            /* a background task is running: show slow dots when idle */
+    bool dots_on;
     float level_smooth;
     app_buddy_tap_cb_t tap_cb;
     void *tap_ctx;
+    app_buddy_tap_cb_t pet_cb;
+    void *pet_ctx;
+    uint32_t ignore_tap_until_ms;    /* a long press is followed by its release click */
+    /* Reactions, sleep and tilt (cross-task inputs, consumed on the render task). */
+    atomic_int pending_react;        /* -1 none */
+    atomic_bool asleep;
+    atomic_bool alarm;
+    atomic_int tilt_x, tilt_y;       /* -100..100 */
+    int react;                       /* active reaction or -1 */
+    uint32_t react_start_ms, react_until_ms;
+    bool was_asleep;
 };
 
 static void note(struct app_buddy *s, esp_gsp_err_t err)
@@ -192,7 +209,8 @@ static void enter_state(struct app_buddy *s, app_buddy_state_t st)
 {
     s->state = st;
     note(s, gsp_buddy_wave_set_visible(s->ui, st == APP_BUDDY_SPEAKING || st == APP_BUDDY_LISTENING));
-    note(s, gsp_buddy_dots_set_visible(s->ui, st == APP_BUDDY_THINKING));
+    s->dots_on = st == APP_BUDDY_THINKING;
+    note(s, gsp_buddy_dots_set_visible(s->ui, s->dots_on));
     if (st == APP_BUDDY_IDLE) {
         s->tx = 0;
         s->ty = 0;
@@ -268,6 +286,72 @@ static void tick(esp_gsp_handle_t ui, void *ctx)
         enter_state(s, (app_buddy_state_t)pending);
     }
 
+    const int react_req = atomic_exchange(&s->pending_react, -1);
+    if (react_req >= 0) {
+        s->react = react_req;
+        s->react_start_ms = s->t_ms;
+        s->react_until_ms = s->t_ms + (react_req == APP_BUDDY_REACT_DIZZY  ? DIZZY_MS
+                                       : react_req == APP_BUDDY_REACT_HAPPY ? HAPPY_MS
+                                                                            : STARTLE_MS);
+    }
+    if (s->react >= 0 && s->t_ms >= s->react_until_ms) {
+        s->react = -1;
+    }
+    const bool asleep = atomic_load(&s->asleep);
+    if (asleep != s->was_asleep) {
+        s->was_asleep = asleep;
+        if (asleep) {
+            note(s, gsp_buddy_wave_set_visible(s->ui, false));
+            note(s, gsp_buddy_dots_set_visible(s->ui, false));
+            s->dots_on = false;
+        } else {
+            enter_state(s, s->state);   /* restore bars/dots for the current state */
+            s->react = APP_BUDDY_REACT_STARTLE;
+            s->react_start_ms = s->t_ms;
+            s->react_until_ms = s->t_ms + STARTLE_MS;
+        }
+    }
+    if (atomic_load(&s->alarm)) {
+        /* Alarm: wide eyes darting with quick worried blinks (overrides sleep). */
+        const uint32_t ph = s->t_ms % 700;
+        show_frame(s, ph < 60 ? F_B2 : (ph < 110 ? F_B1 : F_OPEN));
+        move_eyes(s, (int)lroundf(7.0f * sinf(t / 45.0f)), -12 + (int)lroundf(3.0f * sinf(t / 70.0f)));
+        return;
+    }
+    if (asleep) {
+        /* Eyes closed, drooped, slow breathing; nothing else runs. */
+        show_frame(s, F_B3);
+        move_eyes(s, 0, 16 + (int)lroundf(3.0f * sinf(t / 900.0f)));
+        return;
+    }
+    if (s->react >= 0 && s->state == APP_BUDDY_IDLE) {
+        const float k = (float)(s->t_ms - s->react_start_ms);
+        float rdx = 0, rdy = 0;
+        int rframe = F_OPEN;
+        switch (s->react) {
+        case APP_BUDDY_REACT_DIZZY: {
+            const float r = 26.0f * (1.0f - k / DIZZY_MS);
+            rdx = r * cosf(k / 90.0f);
+            rdy = r * sinf(k / 90.0f);
+            rframe = ((int)(k / 400.0f) % 3 == 1) ? F_B1 : F_OPEN;
+            break;
+        }
+        case APP_BUDDY_REACT_HAPPY:
+            rdy = -10.0f + 4.0f * sinf(k / 140.0f);
+            rframe = F_B1;   /* happy squint */
+            break;
+        default:   /* STARTLE */
+            rdy = -22.0f * expf(-k / 250.0f);
+            rframe = k < 120 ? F_B2 : F_OPEN;
+            break;
+        }
+        show_frame(s, rframe);
+        s->gx = rdx;
+        s->gy = rdy;
+        move_eyes(s, (int)lroundf(rdx), (int)lroundf(rdy));
+        return;
+    }
+
     /* Blinks run in every state. */
     int base = (s->state == APP_BUDDY_THINKING) ? F_THINK : F_OPEN;
     int frame = base;
@@ -292,10 +376,33 @@ static void tick(esp_gsp_handle_t ui, void *ctx)
 
     float dx = 0, dy = 0;
     switch (s->state) {
-    case APP_BUDDY_IDLE:
+    case APP_BUDDY_IDLE: {
+        /* Busy: slow, dim dots under idle eyes until the background task finishes. */
+        const bool want = atomic_load(&s->busy);
+        if (want != s->dots_on) {
+            s->dots_on = want;
+            note(s, gsp_buddy_dots_set_visible(s->ui, want));
+        }
+        if (want) {
+            const float ph = (float)(s->t_ms % 2400) / 2400.0f * 6.2831853f;
+            for (int i = 0; i < DOT_COUNT; ++i) {
+                float v = sinf(ph - (float)i * 0.9f);
+                set_dot(s, i, 40 + (int)(110.0f * (v < 0 ? 0 : v)));
+            }
+        }
         if (s->t_ms >= s->next_glance_ms) {
             pick_glance(s);
             schedule_glance(s);
+        }
+        {
+            /* A tilted head pulls the gaze downhill, overriding idle glances. */
+            const int tx = atomic_load(&s->tilt_x);
+            const int ty = atomic_load(&s->tilt_y);
+            if (tx * tx + ty * ty > 15 * 15) {
+                s->tx = (float)tx * 0.42f;
+                s->ty = (float)ty * 0.42f;
+                s->next_glance_ms = s->t_ms + 1500;
+            }
         }
         /* Quick saccade toward the target, then hold. */
         s->gx += (s->tx - s->gx) * 0.28f;
@@ -303,6 +410,7 @@ static void tick(esp_gsp_handle_t ui, void *ctx)
         dx = s->gx;
         dy = s->gy;
         break;
+    }
     case APP_BUDDY_LISTENING:
         /* Look straight at the user, slightly raised, with a tiny attentive drift. */
         s->gx += (0.0f - s->gx) * 0.25f;
@@ -343,6 +451,17 @@ static void on_event(esp_gsp_handle_t ui, const esp_gsp_event_t *event, void *ct
     if (!gsp_buddy_event_is_tap(event)) {
         return;
     }
+    if (event->arg == 1) {   /* authored long-press call: petting */
+        s->ignore_tap_until_ms = s->t_ms + 800;
+        atomic_store(&s->pending_react, APP_BUDDY_REACT_HAPPY);
+        if (s->pet_cb) {
+            s->pet_cb(s->pet_ctx);
+        }
+        return;
+    }
+    if (s->t_ms < s->ignore_tap_until_ms) {
+        return;
+    }
     s->taps++;
     if (s->tap_cb) {
         s->tap_cb(s->tap_ctx);
@@ -367,6 +486,55 @@ void app_buddy_set_level(app_buddy_handle_t handle, uint8_t level)
     }
     atomic_store(&handle->level, (int)level);
     atomic_store(&handle->has_level, true);
+}
+
+void app_buddy_react(app_buddy_handle_t handle, app_buddy_reaction_t reaction)
+{
+    if (handle) {
+        atomic_store(&handle->pending_react, (int)reaction);
+    }
+}
+
+void app_buddy_set_alarm(app_buddy_handle_t handle, bool ringing)
+{
+    if (handle) {
+        atomic_store(&handle->alarm, ringing);
+    }
+}
+
+void app_buddy_set_sleep(app_buddy_handle_t handle, bool asleep)
+{
+    if (handle) {
+        atomic_store(&handle->asleep, asleep);
+    }
+}
+
+static int clamp100(int v)
+{
+    return v < -100 ? -100 : (v > 100 ? 100 : v);
+}
+
+void app_buddy_set_tilt(app_buddy_handle_t handle, int x, int y)
+{
+    if (handle) {
+        atomic_store(&handle->tilt_x, clamp100(x));
+        atomic_store(&handle->tilt_y, clamp100(y));
+    }
+}
+
+void app_buddy_set_pet_handler(app_buddy_handle_t handle, app_buddy_tap_cb_t cb, void *ctx)
+{
+    if (handle) {
+        handle->pet_ctx = ctx;
+        handle->pet_cb = cb;
+    }
+}
+
+void app_buddy_set_busy(app_buddy_handle_t handle, bool busy)
+{
+    if (handle) {
+        atomic_store(&handle->busy, busy);
+    }
 }
 
 void app_buddy_set_tap_handler(app_buddy_handle_t handle, app_buddy_tap_cb_t cb, void *ctx)
@@ -407,6 +575,13 @@ esp_gsp_err_t app_buddy_create(esp_gsp_handle_t ui, app_buddy_handle_t *out_hand
     atomic_init(&s->pending_state, -1);
     atomic_init(&s->level, 0);
     atomic_init(&s->has_level, false);
+    atomic_init(&s->busy, false);
+    atomic_init(&s->pending_react, -1);
+    atomic_init(&s->asleep, false);
+    atomic_init(&s->alarm, false);
+    atomic_init(&s->tilt_x, 0);
+    atomic_init(&s->tilt_y, 0);
+    s->react = -1;
     s->last_dx = 0;
     s->last_dy = 0;
     for (int i = 0; i < BAR_COUNT; ++i) {

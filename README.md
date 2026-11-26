@@ -1,10 +1,10 @@
 # Grok Desk Buddy for ESP-Mosaico
 
 Big expressive Grok Bot-style eyes on the [ESP-Mosaico](https://github.com/esp-mosaico/esp-mosaico-vibe)'s
-480×480 round screen, that you can **talk to**. Tap the screen, speak, and Grok
-answers through the speaker in about half a second while the eyes listen, think
-and talk. Optionally, it can hand real tasks to **your own Grok Bot agent** and
-read the answer aloud when it comes back.
+480×480 round screen, that you can **talk to**. Say "Hi Grok" (or tap), speak,
+and Grok answers through the speaker while the eyes listen, think and talk. It
+reacts when you shake, bump, tilt or pet it, wakes you up with a shake-to-stop
+alarm, and can hand real tasks to **your own Grok Bot agent**.
 
 <img src="docs/eyes.png" width="240" alt="The buddy's eyes on the Mosaico screen">
 
@@ -13,28 +13,38 @@ read the answer aloud when it comes back.
 
 ## What it does
 
-- **Eyes:** blink, glance around when idle, look at you while listening, drift
-  up and away while thinking, and bob while talking. The bars under them follow
-  your voice and Grok's actual speech.
-- **Tap to talk:** uses xAI's realtime voice API
-  (`wss://api.x.ai/v1/realtime`, `grok-voice-latest`). Grok's server-side voice
-  detection ends your turn; tap while it talks to interrupt.
-- **Grok Bot hand-off (optional):** say "ask Bob to…" and voice Grok calls an
-  `ask_grok_bot` tool. The task goes through a tiny Cloudflare Worker
-  ([`relay/`](relay/)) to a webhook-triggered routine on your Grok Bot. When the
-  bot answers, the buddy chimes and reads it out. Runs take seconds to minutes.
-- **Audio tuned for the tiny speaker:** 16 kHz mic uplink; 24 kHz downlink
-  upsampled 2× with a windowed-sinc FIR, a 300 ms jitter buffer, a 150 Hz
-  high-pass and a +6 dB presence shelf with a soft limiter.
+- **Talk:** xAI realtime voice (`grok-voice-3.0`, pinned), server-side turn
+  detection, tap while it talks to interrupt. Starts on a tap, or hands-free
+  with a **"Hi Grok" wake word** you train yourself ([`wakeword/`](wakeword/)).
+- **Eyes with moods:** idle glances and blinks, listening, thinking, speaking
+  (bars follow your voice and Grok's), slow dots while your Grok Bot is busy.
+- **Reacts to handling:** shake → dizzy spin + buzz; bump → startle; tilt → eyes
+  look downhill; face-down → sleeps with the mic off; pick up → wakes; long
+  press (petting) → happy squint + purr.
+- **Alarms:** "Hi Grok, wake me at 6:30" sets an alarm on the board (kept across
+  reboots). It rings with worried eyes, chimes and a buzz until you shake it,
+  pick it up or tap, then Grok says good morning.
+- **Grok Bot hand-off:** "ask Bob to…" sends a task through the relay to a
+  webhook routine on your Grok Bot; when it answers, the buddy chimes and reads
+  it out. The bot can also ping you (double chime) when it's waiting on you.
+- **Small-speaker audio:** 16 kHz mic uplink; 24 kHz downlink upsampled 2× with a
+  windowed-sinc FIR, a 300 ms jitter buffer and a presence EQ.
 
-## Cost
+## Cost and keys
 
-xAI bills voice per minute (about $0.05–0.08/min at the time of writing; check
-[xAI's pricing](https://docs.x.ai/developers/models/voice-agent-api)). To keep it
-cheap, the buddy only connects when you tap, closes the connection 10 s after
-each reply, and stops listening after 5 s of silence. A short exchange costs a
-few cents. Grok Bot hand-offs run on your Grok Bot plan; the relay caps them at
-30 an hour. The Cloudflare Worker fits in the free tier.
+xAI bills voice per minute (about $0.05–0.08/min at the time of writing; see
+[xAI's pricing](https://docs.x.ai/developers/models/voice-agent-api)).
+
+- **Recommended: voice through the relay.** The [`relay/`](relay/) Cloudflare
+  Worker holds your xAI key as a secret (nothing extractable on the board),
+  pins the model and enforces a **daily voice budget** (default 20 min ≈
+  $1.60/day, `GET /usage` shows minutes used). The Worker fits the free tier.
+- **Fallback: direct.** Without a relay the board connects to xAI itself using a
+  key from Vibe Mode or `secrets/xai_api_key`; anyone holding the board could
+  extract it.
+- The buddy only connects when spoken to, closes the connection 10 s after a
+  reply, and stops listening after 5 s of silence. Grok Bot hand-offs run on
+  your Grok Bot plan; the relay caps them at 30 an hour.
 
 ## Setup
 
@@ -43,32 +53,46 @@ few cents. Grok Bot hand-offs run on your Grok Bot plan; the relay caps them at
 1. Set up the [esp-mosaico-vibe](https://github.com/esp-mosaico/esp-mosaico-vibe)
    workspace (ESP-IDF at the SHA it pins, Python 3.10+) and verify a build.
 2. Clone this repo into the workspace's `projects/` folder as `grok_desk_buddy`.
-3. On the board, enter **Vibe Mode → Settings** and save your Wi-Fi. The app
-   reads it from Vibe Mode's shared settings.
+3. On the board, enter **Vibe Mode → Settings** and save your Wi-Fi.
 
-### 2. xAI API key
+### 2. Relay (recommended) and xAI key
 
-Get a key at [console.x.ai](https://console.x.ai). Either:
+Get a key at [console.x.ai](https://console.x.ai), then (needs a Cloudflare
+account and `wrangler login`):
 
-- add a shared setting named `xai_api_key` in **Vibe Mode → Settings → Shared
-  information** (preferred; nothing is stored on your computer), or
-- run `zsh tools/set_xai_key.sh`, which saves it with a hidden prompt to the
-  git-ignored `secrets/xai_api_key`. It is then built into the firmware, so
-  anyone holding the board could extract it.
+```sh
+cd relay && wrangler deploy
+zsh setup_tokens.sh https://grok-buddy-relay.<your-subdomain>.workers.dev
+wrangler secret put XAI_API_KEY      # paste the key at the hidden prompt
+```
 
-Optional shared setting `xai_voice` picks a voice (default `eve`; others include
-`ara`, `rex`, `leo`, `sal`).
+`setup_tokens.sh` creates the device and bot tokens and writes the board's copy
+to the git-ignored `secrets/relay_url` and `secrets/relay_token`. Adjust
+`DAILY_MINUTES` and `TIMEZONE` in `relay/wrangler.toml`.
 
-### 3. Names (optional)
+*Direct mode instead:* add a shared setting `xai_api_key` in **Vibe Mode →
+Settings → Shared information**, or run `zsh tools/set_xai_key.sh`.
 
-Create `sdkconfig.local.defaults` (git-ignored) to personalise the prompts:
+### 3. Personal settings (optional)
+
+Create `sdkconfig.local.defaults` (git-ignored):
 
 ```
 CONFIG_GROK_BUDDY_OWNER_NAME="Sam"
 CONFIG_GROK_BUDDY_BOT_NAME="Bob"
+CONFIG_GROK_BUDDY_TZ="PST8PDT,M3.2.0,M11.1.0"
 ```
 
-### 4. Build and install
+The time zone (POSIX format) is used for alarms; the clock comes from NTP.
+Shared setting `xai_voice` picks a voice (default `eve`; also `ara`, `rex`,
+`leo`, `sal`).
+
+### 4. Wake word (optional)
+
+Train "Hi Grok" and save it as `wakeword/hi_grok.tflite` — see
+[`wakeword/README.md`](wakeword/README.md).
+
+### 5. Build and install
 
 From the workspace root:
 
@@ -76,22 +100,13 @@ From the workspace root:
 python mosaico.py iris system-update --project projects/grok_desk_buddy
 ```
 
-Without a key or Wi-Fi the app still runs, and taps cycle the faces.
+Prebuilt bundles (generic, no relay or wake word) are attached to
+[Releases](../../releases): install with
+`python mosaico.py iris system-update --project projects/grok_desk_buddy --bundle <file>.irisfw`.
 
-### 5. Grok Bot hand-off (optional)
+### 6. Grok Bot hand-off (optional)
 
-1. **Deploy the relay** (needs a Cloudflare account and `wrangler login`):
-
-   ```sh
-   cd relay && wrangler deploy
-   zsh setup_tokens.sh https://grok-buddy-relay.<your-subdomain>.workers.dev
-   ```
-
-   `setup_tokens.sh` generates the device and bot tokens, stores them as Worker
-   secrets, and writes the device's copy to `secrets/relay_url` and
-   `secrets/relay_token` for the firmware.
-
-2. **Create the routine.** In the Grok Bot app, ask your bot:
+1. **Create the routine.** In the Grok Bot app, ask your bot:
 
    > Create a routine called "Desk buddy tasks" with a webhook trigger and no
    > schedule. On each run: the webhook body is JSON from my ESP-Mosaico desk
@@ -106,30 +121,38 @@ Without a key or Wi-Fi the app still runs, and taps cycle the faces.
    > short note saying you need my OK in the app. Never post anywhere except
    > `reply.url`, and never share the token from those headers.
 
-3. **Connect the routine.** Open the routine on the desktop app, then run
-   `zsh relay/set_webhook.sh` and paste its "POST to" URL and key at the hidden
-   prompts.
+2. **Connect it.** Open the routine on the desktop app, run
+   `zsh relay/set_webhook.sh` and paste its "POST to" URL and key.
 
-4. Rebuild and install (step 4) so the firmware picks up `secrets/relay_*`.
+3. **"Needs you" pings (optional).** Tell your bot: *"Remember the desk buddy's
+   reply URL and headers. Whenever you're waiting on me — a card to open, an
+   approval, a choice — POST a one-sentence spoken note there with
+   `"status": "attention"`."* The buddy double-chimes and reads it.
 
 ## How it's built
 
 | Path | Role |
 | --- | --- |
-| `components/app_buddy` | Eyes controller (portable to the GSP PC simulator) and the authored scene |
-| `components/app_voice` | Wi-Fi, realtime voice session, audio pipeline, Grok Bot relay client |
+| `components/app_buddy` | Eyes, moods, reactions, sleep, alarm face (portable to the GSP PC simulator) |
+| `components/app_voice` | Wi-Fi, realtime voice session, audio pipeline, tools, Grok Bot relay client |
+| `components/app_wake` | "Hi Grok" detection: TFLite Micro + the microWakeWord audio frontend |
+| `components/app_motion` | BMI270 gestures (shake, bump, tilt, face-down) and haptics |
+| `components/app_alarm` | NTP clock, alarms in NVS, ringing |
 | `components/app_config` | Reads Vibe Mode shared settings |
-| `components/app_display` | Display and touch bring-up |
-| `relay/` | Cloudflare Worker + Durable Object between the buddy and your Grok Bot |
-| `tools/render_eyes.py` | Regenerates the eye frames |
+| `relay/` | Cloudflare Worker + Durable Object: voice proxy with budget, Grok Bot tasks/results |
+| `wakeword/` | Wake-word training scripts |
 
 Run the face in the simulator with
 `python mosaico.py project sim --project projects/grok_desk_buddy --interactive`.
+CI builds every push ([`.github/workflows/build.yml`](.github/workflows/build.yml)).
 
 Secrets never live in the repo: `secrets/`, `.gateway/` (installer archives
-that contain built firmware) and `sdkconfig.local.defaults` are git-ignored.
+containing built firmware), `sdkconfig.local.defaults` and wake-word models are
+git-ignored.
 
 ## License
 
-Apache-2.0 (see [LICENSE](LICENSE)). DejaVu fonts under their own license in
+Apache-2.0 (see [LICENSE](LICENSE)). Vendored: TensorFlow Lite Micro audio
+frontend (Apache-2.0) and kissfft (BSD-3-Clause, notice in its sources) in
+`components/app_wake/frontend`; DejaVu fonts under their own license in
 `components/app_buddy/ui/fonts/LICENSE`.

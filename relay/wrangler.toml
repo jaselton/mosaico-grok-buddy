@@ -4,6 +4,12 @@ compatibility_date = "2026-10-01"
 workers_dev = true
 preview_urls = false
 
+[vars]
+XAI_MODEL = "grok-voice-3.0"   # pinned; grok-voice-latest is an alias that can move
+DAILY_MINUTES = "20"           # xAI voice minutes per day (~$0.08/min => max ~$1.60/day)
+MAX_SESSION_SECONDS = "300"    # hard cap on one voice session
+TIMEZONE = "America/Chicago"   # when the daily budget resets
+
 [[durable_objects.bindings]]
 name = "RELAY"
 class_name = "Relay"

@@ -53,3 +53,20 @@ Thumbs.db
 # whose evidence archives contain built firmware with those secrets.
 secrets/
 .gateway/
+
+# Locally trained wake-word model (training data is non-commercial; not redistributed)
+wakeword/*.tflite
+# Wake-word training workspace (see wakeword/README.md)
+wakeword/.venv/
+wakeword/.deps_done
+wakeword/microWakeWord/
+wakeword/piper-sample-generator/
+wakeword/gen_*/
+wakeword/generated_*/
+wakeword/mit_rirs/
+wakeword/audioset*/
+wakeword/fma*/
+wakeword/negative_datasets/
+wakeword/trained_models/
+wakeword/training_parameters.yaml
+wakeword/*.log

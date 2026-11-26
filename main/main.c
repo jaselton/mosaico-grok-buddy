@@ -2,6 +2,8 @@
 #include "app_config.h"
 #include "app_display.h"
 #include "app_buddy.h"
+#include "app_alarm.h"
+#include "app_motion.h"
 #include "app_voice.h"
 #include "esp_iris.h"
 #include "esp_log.h"
@@ -18,6 +20,40 @@ static struct {
     esp_gsp_handle_t ui;
     app_buddy_handle_t controller;
 } application;
+
+/* Face-down puts the voice to sleep too (mic off); picking it up stops an alarm. */
+static void on_sleep(bool asleep, void *ctx)
+{
+    (void)ctx;
+    if (!asleep) {
+        app_alarm_dismiss();
+    }
+    app_voice_set_asleep(asleep);
+}
+
+/* Shaking stops a ringing alarm (the face goes dizzy either way). */
+static void on_shake(void *ctx)
+{
+    (void)ctx;
+    app_alarm_dismiss();
+}
+
+/* Alarm ringing: worried eyes, buzz pattern and chimes until dismissed. */
+static void on_alarm(bool ringing, const char *label, void *ctx)
+{
+    (void)ctx;
+    app_buddy_set_alarm(application.controller, ringing);
+    app_motion_set_alarm(ringing);
+    app_voice_set_alarm(ringing, label);
+}
+
+/* Petting (long press): the face reacts itself; add a purr. */
+static void on_pet(void *ctx)
+{
+    (void)ctx;
+    app_motion_purr();
+}
+
 
 void app_main(void)
 {
@@ -47,6 +83,18 @@ void app_main(void)
     /* Wi-Fi and the xAI key come from Vibe Mode shared settings; app_voice owns them. */
     const app_voice_config_t voice = { .buddy = application.controller };
     const esp_err_t voice_err = app_voice_start(&voice);
+    if (voice_err == ESP_OK) {
+        /* Needs Wi-Fi/netif from app_voice for SNTP time. */
+        ESP_ERROR_CHECK_WITHOUT_ABORT(app_alarm_start(on_alarm, NULL));
+    }
+    const app_motion_config_t motion = {
+        .buddy = application.controller,
+        .on_sleep = voice_err == ESP_OK ? on_sleep : NULL,
+        .on_shake = on_shake,
+    };
+    if (app_motion_start(&motion) == ESP_OK) {
+        app_buddy_set_pet_handler(application.controller, on_pet, NULL);
+    }
     if (voice_err == ESP_OK) {
         ESP_LOGI(TAG, "Grok desk buddy ready (tap to talk)");
     } else {

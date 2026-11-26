@@ -3,13 +3,17 @@
 //   POST /task     device -> relay -> Grok Bot routine webhook (adds a reply callback)
 //   POST /result   Grok Bot -> relay (the routine posts its spoken answer here)
 //   GET  /results  device polls; returns undelivered results once, then marks them delivered
+//   GET  /voice    device WebSocket, proxied to xAI realtime with the key (see voice.js)
+//   GET  /usage    device: voice minutes used per day and the daily limit
 //   GET  /health   open liveness check (no data)
 //
-// Secrets (wrangler secret put): DEVICE_TOKEN, BOT_TOKEN, GROKBOT_WEBHOOK_URL, GROKBOT_WEBHOOK_KEY.
+// Secrets (wrangler secret put): DEVICE_TOKEN, BOT_TOKEN, XAI_API_KEY,
+// GROKBOT_WEBHOOK_URL, GROKBOT_WEBHOOK_KEY.
 // DEVICE_TOKEN can send tasks and read results; BOT_TOKEN can only post results.
 // State lives in one SQLite-backed Durable Object so reads see writes immediately.
 
 import { DurableObject } from "cloudflare:workers";
+import { handleVoice } from "./voice.js";
 
 const MAX_TASK_CHARS = 2000;
 const MAX_RESULT_CHARS = 2000;
@@ -48,7 +52,7 @@ async function readJson(req) {
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (url.pathname === "/health" && req.method === "GET") return json({ ok: true });
 
@@ -56,6 +60,16 @@ export default {
     const isDevice = safeEqual(token, env.DEVICE_TOKEN);
     const isBot = safeEqual(token, env.BOT_TOKEN);
     const stub = env.RELAY.get(env.RELAY.idFromName("main"));
+
+    if (url.pathname === "/voice") {
+      if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
+      return handleVoice(req, env, ctx, stub);
+    }
+
+    if (url.pathname === "/usage" && req.method === "GET") {
+      if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
+      return json({ ok: true, daily_limit_minutes: Number(env.DAILY_MINUTES || "20"), ...(await stub.usage()) });
+    }
 
     if (url.pathname === "/task" && req.method === "POST") {
       if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
@@ -109,7 +123,8 @@ export default {
       let body;
       try { body = await readJson(req); } catch { return json({ ok: false, error: "bad json" }, 400); }
       const text = String(body.spoken_text || body.text || "").trim();
-      const status = ["done", "error", "working"].includes(String(body.status || "done").toLowerCase())
+      // "attention": the bot is waiting on the owner (a card to open, a choice to make).
+      const status = ["done", "error", "working", "attention"].includes(String(body.status || "done").toLowerCase())
         ? String(body.status || "done").toLowerCase()
         : "done";
       if (!text && status !== "working") return json({ ok: false, error: "spoken_text required" }, 400);
@@ -133,6 +148,8 @@ export class Relay extends DurableObject {
     this.sql = ctx.storage.sql;
     this.sql.exec(`CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, task TEXT NOT NULL, created INTEGER NOT NULL, upstream INTEGER)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS voice_usage (day TEXT PRIMARY KEY, secs INTEGER NOT NULL)`);
+    this.tz = env.TIMEZONE || "America/Chicago";
     this.sql.exec(`CREATE TABLE IF NOT EXISTS results (
       seq INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT, text TEXT, status TEXT,
       created INTEGER NOT NULL, delivered INTEGER NOT NULL DEFAULT 0)`);
@@ -165,6 +182,26 @@ export class Relay extends DurableObject {
     this.sql.exec("INSERT INTO results (request_id, text, status, created) VALUES (?, ?, ?, ?)",
       requestId, text, status, now);
     return { ok: true };
+  }
+
+  today() {
+    return new Date().toLocaleDateString("en-CA", { timeZone: this.tz });
+  }
+
+  budgetRemaining(limitSec) {
+    const row = this.sql.exec("SELECT secs FROM voice_usage WHERE day = ?", this.today()).toArray()[0];
+    return Math.max(0, limitSec - (row ? row.secs : 0));
+  }
+
+  budgetAdd(secs) {
+    this.sql.exec(
+      "INSERT INTO voice_usage (day, secs) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET secs = secs + excluded.secs",
+      this.today(), secs);
+  }
+
+  usage() {
+    const rows = this.sql.exec("SELECT day, secs FROM voice_usage ORDER BY day DESC LIMIT 14").toArray();
+    return { minutes_used: Object.fromEntries(rows.map(r => [r.day, +(r.secs / 60).toFixed(1)])) };
   }
 
   takeResults() {

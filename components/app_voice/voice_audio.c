@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
+#include "app_wake.h"
 #include "voice_internal.h"
 
 static const char *TAG = "voice_audio";
@@ -207,6 +208,7 @@ static void capture_task(void *arg)
             }
             out[i] = (int16_t)(acc / 3);
         }
+        app_wake_feed(out, UP_SAMPLES);   /* no-op without a model or while paused */
         if (atomic_load(&s_capturing)) {
             xStreamBufferSend(s_capture, out, sizeof(out), 0);
             if (s_level_cb && !atomic_load(&s_playing)) {

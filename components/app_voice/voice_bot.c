@@ -117,12 +117,14 @@ static void poll_results(void)
     cJSON_ArrayForEach(r, arr) {
         const cJSON *text = cJSON_GetObjectItemCaseSensitive(r, "text");
         const cJSON *st = cJSON_GetObjectItemCaseSensitive(r, "status");
-        const bool working = cJSON_IsString(st) && !strcmp(st->valuestring, "working");
-        if (working || !cJSON_IsString(text) || !text->valuestring[0]) {
+        const char *status = cJSON_IsString(st) ? st->valuestring : "done";
+        if (!strcmp(status, "working") || !cJSON_IsString(text) || !text->valuestring[0]) {
             continue;
         }
-        ESP_LOGI(TAG, "bot answered (%u chars)", (unsigned)strlen(text->valuestring));
-        b.cb(VOICE_BOT_RESULT, "", text->valuestring, b.ctx);
+        const bool attention = !strcmp(status, "attention");
+        ESP_LOGI(TAG, "bot %s (%u chars)", attention ? "needs attention" : "answered",
+                 (unsigned)strlen(text->valuestring));
+        b.cb(attention ? VOICE_BOT_ATTENTION : VOICE_BOT_RESULT, "", text->valuestring, b.ctx);
     }
     cJSON_Delete(root);
 }
@@ -172,7 +174,7 @@ esp_err_t voice_bot_start(const char *base_url, const char *token, voice_bot_cb_
     if (!b.resp || !b.q) {
         return ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(bot_task, "voice_bot", 6144, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreateWithCaps(bot_task, "voice_bot", 6144, NULL, 4, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "Grok Bot relay ready");

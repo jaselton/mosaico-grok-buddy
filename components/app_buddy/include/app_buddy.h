@@ -24,6 +24,13 @@ typedef enum {
 /** Tap callback; runs on the GSP render task, so it must not block. */
 typedef void (*app_buddy_tap_cb_t)(void *ctx);
 
+/** Short expressions layered over the idle face. */
+typedef enum {
+    APP_BUDDY_REACT_DIZZY,      /**< shaken: eyes spin */
+    APP_BUDDY_REACT_HAPPY,      /**< petted: happy squint and bob */
+    APP_BUDDY_REACT_STARTLE,    /**< bumped or woken: eyes jump */
+} app_buddy_reaction_t;
+
 /** Value copy for diagnostics; no pointers into private controller state. */
 typedef struct {
     app_buddy_state_t state;    /**< Current face state. */
@@ -48,6 +55,24 @@ esp_gsp_err_t app_buddy_request_state(app_buddy_handle_t handle, app_buddy_state
 /** Feed a live audio level (0..255) from any task to drive the bars.
  * Until first called, the bars use a synthetic speech envelope. */
 void app_buddy_set_level(app_buddy_handle_t handle, uint8_t level);
+
+/** Play a short reaction from any task (shown while the face is idle). */
+void app_buddy_react(app_buddy_handle_t handle, app_buddy_reaction_t reaction);
+
+/** Alarm face from any task: wide, jittery, blinking eyes until cleared. */
+void app_buddy_set_alarm(app_buddy_handle_t handle, bool ringing);
+
+/** Sleep (eyes closed, slow breathing) or wake from any task; waking startles. */
+void app_buddy_set_sleep(app_buddy_handle_t handle, bool asleep);
+
+/** Head tilt from any task, -100..100 per axis; idle eyes look downhill. */
+void app_buddy_set_tilt(app_buddy_handle_t handle, int x, int y);
+
+/** Long-press ("petting") callback on the render task; the face reacts itself. */
+void app_buddy_set_pet_handler(app_buddy_handle_t handle, app_buddy_tap_cb_t cb, void *ctx);
+
+/** Show slow dots under the idle eyes while a background task runs (any task). */
+void app_buddy_set_busy(app_buddy_handle_t handle, bool busy);
 
 /** Route taps to cb instead of cycling states; NULL restores cycling.
  * Call from the UI loop or once right after create. */
