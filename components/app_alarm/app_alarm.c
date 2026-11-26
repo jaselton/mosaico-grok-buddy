@@ -39,7 +39,14 @@ typedef struct {
     char label[APP_ALARM_LABEL_MAX];
 } alarm_t;
 
+typedef struct {
+    int8_t hour, minute;   /* -1 = never set */
+    uint8_t on;
+    int64_t last_rang_day; /* local day number it last rang, to ring once per day */
+} watch_t;
+
 static struct {
+    watch_t watch;
     alarm_t alarms[APP_ALARM_MAX];
     SemaphoreHandle_t lock;
     app_alarm_ring_cb_t cb;
@@ -57,6 +64,7 @@ static void save(void)
         return;
     }
     nvs_set_blob(h, "list", a.alarms, sizeof(a.alarms));
+    nvs_set_blob(h, "watch", &a.watch, sizeof(a.watch));
     nvs_commit(h);
     nvs_close(h);
 }
@@ -68,6 +76,11 @@ static void load(void)
     if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
         if (nvs_get_blob(h, "list", a.alarms, &len) != ESP_OK || len != sizeof(a.alarms)) {
             memset(a.alarms, 0, sizeof(a.alarms));
+        }
+        len = sizeof(a.watch);
+        if (nvs_get_blob(h, "watch", &a.watch, &len) != ESP_OK || len != sizeof(a.watch)) {
+            a.watch.hour = a.watch.minute = -1;
+            a.watch.on = 0;
         }
         nvs_close(h);
     }
@@ -172,6 +185,42 @@ static esp_err_t store(time_t when, const char *label)
     return ESP_OK;
 }
 
+esp_err_t app_alarm_set_watch(int hour, int minute, bool on)
+{
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(a.lock, portMAX_DELAY);
+    const bool moved = a.watch.hour != hour || a.watch.minute != minute;
+    a.watch.hour = (int8_t)hour;
+    a.watch.minute = (int8_t)minute;
+    a.watch.on = on;
+    if (moved) {
+        a.watch.last_rang_day = 0;   /* a new time may ring today */
+    }
+    atomic_store(&a.dirty, true);
+    xSemaphoreGive(a.lock);
+    ESP_LOGI(TAG, "watch alarm %02d:%02d %s", hour, minute, on ? "ON" : "off");
+    return ESP_OK;
+}
+
+bool app_alarm_get_watch(int *hour, int *minute, bool *on)
+{
+    if (a.watch.hour < 0) {
+        return false;
+    }
+    if (hour) {
+        *hour = a.watch.hour;
+    }
+    if (minute) {
+        *minute = a.watch.minute;
+    }
+    if (on) {
+        *on = a.watch.on;
+    }
+    return true;
+}
+
 int app_alarm_cancel_all(void)
 {
     xSemaphoreTake(a.lock, portMAX_DELAY);
@@ -253,6 +302,18 @@ static void alarm_task(void *arg)
             snprintf(a.ring_label, sizeof(a.ring_label), "%s", a.alarms[due].label);
             a.alarms[due].when = 0;
             changed = true;
+        } else if (a.watch.on && a.watch.hour >= 0) {
+            /* Daily watch alarm: ring within the minute it's set for, once per day. */
+            time_t nt = (time_t)now;
+            struct tm lt;
+            localtime_r(&nt, &lt);
+            const int64_t day = (int64_t)(lt.tm_year * 400 + lt.tm_yday);
+            if (lt.tm_hour == a.watch.hour && lt.tm_min == a.watch.minute && a.watch.last_rang_day != day) {
+                a.watch.last_rang_day = day;
+                snprintf(a.ring_label, sizeof(a.ring_label), "%s", "wake-up alarm");
+                due = APP_ALARM_MAX;   /* any non-negative value: ring */
+                changed = true;
+            }
         }
         if (changed) {
             save();

@@ -5,7 +5,7 @@
   "screen_bg": "#000000",
   "font": "fonts/DejaVuSans.ttf",
   "default_font_size": 20,
-  "swipe": false,
+  "swipe": true,
   "objects": [
     {
       "type": "button",
@@ -19,8 +19,16 @@
       "name": "tap",
       "callback": "tap",
       "events": [
-        {"event": "click", "action": "call", "arg": 0},
-        {"event": "long", "action": "call", "arg": 1}
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        },
+        {
+          "event": "long",
+          "action": "call",
+          "arg": 1
+        }
       ]
     },
     {

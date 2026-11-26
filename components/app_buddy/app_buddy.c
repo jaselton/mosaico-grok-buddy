@@ -11,6 +11,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 
+#define GSP_BUNDLE_ENABLE_RAW_IDS 1   /* clock canvas bind (scene-local) */
 #include "bundle_gsp.h"
 #ifdef ESP_PLATFORM
 #include "esp_log.h"
@@ -133,6 +134,9 @@ struct app_buddy {
     void *tap_ctx;
     app_buddy_tap_cb_t pet_cb;
     void *pet_ctx;
+    app_buddy_scene_cb_t scene_cb;
+    void *scene_ctx;
+    uint16_t scene;   /* scene currently showing */
     uint32_t ignore_tap_until_ms;    /* a long press is followed by its release click */
     /* Reactions, sleep and tilt (cross-task inputs, consumed on the render task). */
     atomic_int pending_react;        /* -1 none */
@@ -316,6 +320,9 @@ static void tick(esp_gsp_handle_t ui, void *ctx)
 {
     (void)ui;
     struct app_buddy *s = ctx;
+    if (s->scene != GSP_BUNDLE_SCENE_BUDDY) {
+        return;   /* another screen is showing; the eyes resume on return */
+    }
     s->t_ms += TICK_MS;
     s->frames++;
     const float t = (float)s->t_ms;
@@ -624,6 +631,14 @@ static void on_event(esp_gsp_handle_t ui, const esp_gsp_event_t *event, void *ct
 {
     (void)ui;
     struct app_buddy *s = ctx;
+    if (event->type == ESP_GSP_EVENT_SCENE_CHANGED) {
+        s->scene = event->scene_id;
+        BUDDY_LOG("scene %u", event->scene_id);
+        if (s->scene_cb) {
+            s->scene_cb(event->scene_id, s->scene_ctx);
+        }
+        return;
+    }
     if (!gsp_buddy_event_is_tap(event)) {
         return;
     }
@@ -719,6 +734,20 @@ void app_buddy_set_pet_handler(app_buddy_handle_t handle, app_buddy_tap_cb_t cb,
         handle->pet_ctx = ctx;
         handle->pet_cb = cb;
     }
+}
+
+void app_buddy_set_scene_handler(app_buddy_handle_t handle, app_buddy_scene_cb_t cb, void *ctx)
+{
+    if (handle) {
+        handle->scene_ctx = ctx;
+        handle->scene_cb = cb;
+    }
+}
+
+void app_buddy_clock_canvas(uint16_t *bind, uint16_t *scene)
+{
+    *bind = GSP_CLOCK_BIND_FACE;
+    *scene = GSP_BUNDLE_SCENE_CLOCK;
 }
 
 void app_buddy_set_busy(app_buddy_handle_t handle, bool busy)

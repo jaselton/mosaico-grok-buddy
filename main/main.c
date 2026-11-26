@@ -3,6 +3,7 @@
 #include "app_display.h"
 #include "app_buddy.h"
 #include "app_alarm.h"
+#include "app_clock.h"
 #include "app_motion.h"
 #include "app_voice.h"
 #include "esp_iris.h"
@@ -48,6 +49,13 @@ static void on_alarm(bool ringing, const char *label, void *ctx)
 }
 
 /* Petting (long press): the face reacts itself; add a purr. */
+/* Swiping between the eyes and the world-timer. */
+static void on_scene(uint16_t scene_id, void *ctx)
+{
+    (void)ctx;
+    app_clock_scene_changed(scene_id);
+}
+
 static void on_pet(void *ctx)
 {
     (void)ctx;
@@ -94,6 +102,11 @@ void app_main(void)
     };
     if (app_motion_start(&motion) == ESP_OK) {
         app_buddy_set_pet_handler(application.controller, on_pet, NULL);
+    }
+    uint16_t clock_bind, clock_scene;
+    app_buddy_clock_canvas(&clock_bind, &clock_scene);
+    if (app_clock_start(application.ui, clock_bind, clock_scene) == ESP_OK) {
+        app_buddy_set_scene_handler(application.controller, on_scene, NULL);
     }
     if (voice_err == ESP_OK) {
         ESP_LOGI(TAG, "Grok desk buddy ready (tap to talk)");

@@ -33,6 +33,12 @@ esp_err_t app_alarm_set(int hour, int minute, const char *label, char *out, size
 /** Set a one-shot alarm `seconds` from now (1 s .. 24 h); spoken confirmation in out. */
 esp_err_t app_alarm_set_in(int seconds, const char *label, char *out, size_t len);
 
+/** Daily "watch" alarm (the clock face's alarm hand): hour 0-23, minute 0-59.
+ * Persisted; when on it rings every day at that local time. */
+esp_err_t app_alarm_set_watch(int hour, int minute, bool on);
+/** Read the watch alarm; returns false if it has never been set. */
+bool app_alarm_get_watch(int *hour, int *minute, bool *on);
+
 /** Cancel every pending alarm; returns how many were cancelled. */
 int app_alarm_cancel_all(void);
 

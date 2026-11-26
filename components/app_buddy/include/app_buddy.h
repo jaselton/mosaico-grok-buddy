@@ -91,6 +91,13 @@ void app_buddy_set_tilt(app_buddy_handle_t handle, int x, int y);
 /** Long-press ("petting") callback on the render task; the face reacts itself. */
 void app_buddy_set_pet_handler(app_buddy_handle_t handle, app_buddy_tap_cb_t cb, void *ctx);
 
+/** Scene-change callback (render task): the eyes pause on other screens. */
+typedef void (*app_buddy_scene_cb_t)(uint16_t scene_id, void *ctx);
+void app_buddy_set_scene_handler(app_buddy_handle_t handle, app_buddy_scene_cb_t cb, void *ctx);
+
+/** Canvas bind and scene id of the clock screen in the shared UI bundle. */
+void app_buddy_clock_canvas(uint16_t *bind, uint16_t *scene);
+
 /** Show slow dots under the idle eyes while a background task runs (any task). */
 void app_buddy_set_busy(app_buddy_handle_t handle, bool busy);
 

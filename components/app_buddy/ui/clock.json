@@ -1,0 +1,22 @@
+{
+  "screen": "clock",
+  "w": 480,
+  "h": 480,
+  "screen_bg": "#000000",
+  "font": "fonts/DejaVuSans.ttf",
+  "default_font_size": 20,
+  "swipe": true,
+  "objects": [
+    {
+      "type": "image",
+      "parent": -1,
+      "x": 0,
+      "y": 0,
+      "w": 480,
+      "h": 480,
+      "image": "assets/clock_canvas.png",
+      "name": "face",
+      "bind": "face"
+    }
+  ]
+}
