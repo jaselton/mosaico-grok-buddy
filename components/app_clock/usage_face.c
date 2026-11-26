@@ -32,6 +32,7 @@ static const char *TAG = "usage_face";
 #define CORE 7.5f
 #define JSON_MAX 1024
 #define REFRESH_US (60LL * 1000 * 1000)
+#define BACKGROUND_US (15LL * 60 * 1000 * 1000)
 
 typedef struct {
     bool ok, has_team;
@@ -290,14 +291,47 @@ static void on_summary(const char *json, void *ctx)
     portEXIT_CRITICAL(&f.lock);
 }
 
+static app_clock_usage_note_cb_t s_note_cb;
+
+void usage_face_set_note_handler(app_clock_usage_note_cb_t cb)
+{
+    s_note_cb = cb;
+}
+
+/* A short warning for the eyes screen when the plan is nearly used up. */
+static void report_note(void)
+{
+    if (!s_note_cb || !f.have) {
+        return;
+    }
+    const usage_t *u = &f.u;
+    char note[64] = "";
+    if (u->has_team && u->age_s < 6 * 3600) {
+        const bool week_full = u->week_pct >= 99.5f;
+        const bool extra_full = u->month_limit > 0 && u->month_used >= 0.95f * u->month_limit;
+        if (week_full && extra_full) {
+            snprintf(note, sizeof(note), "Grok usage maxed out");
+        } else if (week_full) {
+            snprintf(note, sizeof(note), "Grok weekly plan used up");
+        } else if (u->week_pct >= 90.0f) {
+            snprintf(note, sizeof(note), "Grok %d%% of weekly plan", (int)u->week_pct);
+        }
+    }
+    s_note_cb(note);
+}
+
 static void tick(esp_gsp_handle_t ui, void *ctx)
 {
     (void)ctx;
-    if (f.current != f.id.scene) {
-        return;
-    }
     const int64_t now = esp_timer_get_time();
-    if (now - f.last_req_us > REFRESH_US) {
+    const bool visible = f.current == f.id.scene;
+    if (!visible) {
+        /* Off screen: refresh now and then so the eyes can warn about usage. */
+        if (now - f.last_req_us > BACKGROUND_US || !f.last_req_us) {
+            f.last_req_us = now;
+            app_voice_request_summary();
+        }
+    } else if (now - f.last_req_us > REFRESH_US) {
         f.last_req_us = now;
         app_voice_request_summary();
     }
@@ -317,6 +351,10 @@ static void tick(esp_gsp_handle_t ui, void *ctx)
     if (local[0]) {
         parse(local);
         f.fetch_failed = false;
+        report_note();
+    }
+    if (!visible) {
+        return;
     }
     render();
     update_labels();

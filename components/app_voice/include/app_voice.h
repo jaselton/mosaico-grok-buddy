@@ -36,6 +36,30 @@ void app_voice_set_summary_handler(app_voice_summary_cb_t cb, void *ctx);
 /** Ask for a fresh summary soon (no-op without the relay). */
 void app_voice_request_summary(void);
 
+/** Workout and timer beeps through the speaker (any task, non-blocking). */
+typedef enum {
+    APP_VOICE_BEEP_COUNT,   /* 3-2-1 tick */
+    APP_VOICE_BEEP_START,   /* get-ready began */
+    APP_VOICE_BEEP_WORK,    /* go */
+    APP_VOICE_BEEP_REST,
+    APP_VOICE_BEEP_DONE,
+} app_voice_beep_t;
+void app_voice_beep(app_voice_beep_t pattern);
+
+/** Night mode (from any task): wake word off and announcements held until
+ * morning; a tap still talks and lifts it for a while. */
+void app_voice_set_night(bool night);
+/** True while night mode is in effect (not lifted by a tap or an alarm). */
+bool app_voice_night_active(void);
+
+/** Grok asked to show a screen (a timer or workout it just started). */
+typedef enum {
+    APP_VOICE_SCREEN_TIMER,
+    APP_VOICE_SCREEN_WORKOUT,
+} app_voice_screen_t;
+typedef void (*app_voice_screen_cb_t)(app_voice_screen_t screen, void *ctx);
+void app_voice_set_screen_handler(app_voice_screen_cb_t cb, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

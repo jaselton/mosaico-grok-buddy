@@ -22,11 +22,14 @@
 #include <time.h>
 
 #include "app_alarm.h"
+#include "app_camera.h"
+#include "app_workout.h"
 #include "app_config.h"
 #include "app_wake.h"
 #include "sdkconfig.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -87,6 +90,21 @@ static const char *TAG = "app_voice";
     "short label if one was given. cancel_alarms clears them and switches the hand " \
     "off. Confirm briefly using the time the tool returns."
 
+#define WORKOUT_INSTRUCTIONS                                                        \
+    " There is a workout interval timer on its own screen. Use the workout tool "    \
+    "for exercise timing: presets tabata (20 on/10 off x8), emom (every minute on "  \
+    "the minute), interval (40/20), rounds (3 min on/1 off, boxing) and stopwatch "  \
+    "(counts up). For anything custom pass work_seconds, rest_seconds and rounds "   \
+    "(e.g. \"10 rounds of 45 on 15 off\"; an AMRAP of 12 minutes = work_seconds "   \
+    "720, 1 round). It starts with a 10 second get-ready and beeps at every "       \
+    "change, so keep your reply to a few words. Use timer_control to pause, "      \
+    "resume, reset or check the plain countdown timer."
+
+#define LOOK_INSTRUCTIONS                                                           \
+    " This device has a small camera. When " OWNER " asks what you see, to look at " \
+    "something, read something or identify what they're holding, call look with "  \
+    "their question; answer from what it returns, briefly. Only look when asked."
+
 #define GREETING_PREFIX                                                             \
     "[" OWNER "'s alarm just rang and they switched it off. Greet them warmly; if it " \
     "is morning, give a quick briefing: today's date and, after calling get_weather, " \
@@ -126,6 +144,10 @@ typedef enum {
     EV_TOOL_FAILED,     /* call_id set */
     EV_BOT_RESULT,      /* text = bot answer */
     EV_BOT_ATTENTION,   /* text = what the bot is waiting on */
+    EV_BEEP,            /* call_id[0] = '0' + app_voice_beep_t */
+    EV_NIGHT,           /* call_id[0] = '1' night, '0' day */
+    EV_LOOK,            /* text = question, call_id set */
+    EV_LOOK_DONE,       /* text = tool output JSON, call_id set */
 } event_t;
 
 /* Queue item; text (if any) is heap-owned by the receiver. */
@@ -177,6 +199,11 @@ static struct {
     char *announce[MAX_ANNOUNCE];   /* leading ATTN_MARK = attention notice */
     int announce_count;
     int pending_tasks;              /* tasks handed to the bot, not yet answered */
+    bool night;                     /* night hours (from the app) */
+    int64_t night_lift_until_us;    /* a tap or an alarm lifts night mode for a while */
+    atomic_bool night_now;          /* night mode in effect (read from other tasks) */
+    app_voice_screen_cb_t screen_cb;
+    void *screen_ctx;
     int64_t pending_since_us;
 } s;
 
@@ -241,6 +268,21 @@ static void face(app_buddy_state_t st)
 
 static void update_wake_enable(void);
 
+#define NIGHT_LIFT_TAP_US   (10LL * 60 * 1000 * 1000)
+#define NIGHT_LIFT_ALARM_US (3LL * 3600 * 1000 * 1000)
+
+static bool night_active(void)
+{
+    return s.night && !s.alarm_ringing && esp_timer_get_time() >= s.night_lift_until_us;
+}
+
+static void show_screen(app_voice_screen_t scr)
+{
+    if (s.screen_cb) {
+        s.screen_cb(scr, s.screen_ctx);
+    }
+}
+
 static void set_state(vstate_t st)
 {
     if (st != s.state) {
@@ -271,7 +313,7 @@ static void set_state(vstate_t st)
  * never while the speaker might be talking). */
 static void update_wake_enable(void)
 {
-    app_wake_set_enabled(s.state == V_IDLE && !s.asleep && !s.alarm_ringing &&
+    app_wake_set_enabled(s.state == V_IDLE && !s.asleep && !s.alarm_ringing && !night_active() &&
                          esp_timer_get_time() >= s.budget_lock_until_us && !voice_audio_playing());
 }
 
@@ -387,7 +429,8 @@ static void handle_message(const char *msg, size_t len)
         const cJSON *call_id = cJSON_GetObjectItemCaseSensitive(root, "call_id");
         const cJSON *args = cJSON_GetObjectItemCaseSensitive(root, "arguments");
         if (cJSON_IsString(name) && cJSON_IsString(args) &&
-                (!strcmp(name->valuestring, "set_alarm") || !strcmp(name->valuestring, "cancel_alarms"))) {
+                (!strcmp(name->valuestring, "set_alarm") || !strcmp(name->valuestring, "cancel_alarms") ||
+                 !strcmp(name->valuestring, "timer_control") || !strcmp(name->valuestring, "workout"))) {
             const size_t n = strlen(name->valuestring) + strlen(args->valuestring) + 2;
             char *t = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
             if (t) {
@@ -395,6 +438,12 @@ static void handle_message(const char *msg, size_t len)
                 post_msg(EV_LOCAL_TOOL, t, cJSON_IsString(call_id) ? call_id->valuestring : "");
                 heap_caps_free(t);
             }
+        } else if (cJSON_IsString(name) && !strcmp(name->valuestring, "look") && cJSON_IsString(args)) {
+            cJSON *a = cJSON_Parse(args->valuestring);
+            const cJSON *q = a ? cJSON_GetObjectItemCaseSensitive(a, "question") : NULL;
+            post_msg(EV_LOOK, cJSON_IsString(q) ? q->valuestring : "What do you see?",
+                     cJSON_IsString(call_id) ? call_id->valuestring : "");
+            cJSON_Delete(a);
         } else if (cJSON_IsString(name) && !strcmp(name->valuestring, "ask_grok_bot") && cJSON_IsString(args)) {
             cJSON *a = cJSON_Parse(args->valuestring);
             const cJSON *task = a ? cJSON_GetObjectItemCaseSensitive(a, "task") : NULL;
@@ -520,7 +569,7 @@ static void ws_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 static void uplink_task(void *arg)
 {
     (void)arg;
-    static uint8_t pcm[UPLINK_CHUNK];
+    EXT_RAM_BSS_ATTR static uint8_t pcm[UPLINK_CHUNK];   /* encoded to base64, never DMA */
     const size_t b64_cap = UPLINK_CHUNK / 3 * 4 + 8;
     const size_t json_cap = b64_cap + 64;
     char *json = heap_caps_malloc(json_cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -625,8 +674,77 @@ static void send_cjson(cJSON *o)
     }
 }
 
+static cJSON *add_enum(cJSON *props, const char *key, const char *desc, const char *const *vals, int n)
+{
+    cJSON *p = cJSON_AddObjectToObject(props, key);
+    cJSON_AddStringToObject(p, "type", "string");
+    cJSON_AddStringToObject(p, "description", desc);
+    cJSON *e = cJSON_AddArrayToObject(p, "enum");
+    for (int i = 0; i < n; ++i) {
+        cJSON_AddItemToArray(e, cJSON_CreateString(vals[i]));
+    }
+    return p;
+}
+
+static void add_int(cJSON *props, const char *key, const char *desc)
+{
+    cJSON *p = cJSON_AddObjectToObject(props, key);
+    cJSON_AddStringToObject(p, "type", "integer");
+    cJSON_AddStringToObject(p, "description", desc);
+}
+
+static void add_device_tools(cJSON *tools, bool camera)
+{
+    {
+        cJSON *t = cJSON_CreateObject();
+        cJSON_AddStringToObject(t, "type", "function");
+        cJSON_AddStringToObject(t, "name", "timer_control");
+        cJSON_AddStringToObject(t, "description", "Pause, resume, reset or read the countdown timer.");
+        cJSON *params = cJSON_AddObjectToObject(t, "parameters");
+        cJSON_AddStringToObject(params, "type", "object");
+        static const char *const acts[] = { "pause", "resume", "reset", "status" };
+        add_enum(cJSON_AddObjectToObject(params, "properties"), "action", "What to do", acts, 4);
+        cJSON_AddItemToArray(cJSON_AddArrayToObject(params, "required"), cJSON_CreateString("action"));
+        cJSON_AddItemToArray(tools, t);
+    }
+    {
+        cJSON *t = cJSON_CreateObject();
+        cJSON_AddStringToObject(t, "type", "function");
+        cJSON_AddStringToObject(t, "name", "workout");
+        cJSON_AddStringToObject(t, "description", "Workout interval timer: start a preset or custom intervals, "
+                                                  "pause, resume, stop, or report progress.");
+        cJSON *params = cJSON_AddObjectToObject(t, "parameters");
+        cJSON_AddStringToObject(params, "type", "object");
+        cJSON *props = cJSON_AddObjectToObject(params, "properties");
+        static const char *const acts[] = { "start", "pause", "resume", "stop", "status" };
+        add_enum(props, "action", "What to do", acts, 5);
+        static const char *const presets[] = { "tabata", "emom", "interval", "rounds", "stopwatch" };
+        add_enum(props, "preset", "Preset to start (omit when giving custom times)", presets, 5);
+        add_int(props, "work_seconds", "Custom: seconds of work per round (EMOM: 60)");
+        add_int(props, "rest_seconds", "Custom: seconds of rest between rounds (0 = none)");
+        add_int(props, "rounds", "Number of rounds/minutes (1-99)");
+        cJSON_AddItemToArray(cJSON_AddArrayToObject(params, "required"), cJSON_CreateString("action"));
+        cJSON_AddItemToArray(tools, t);
+    }
+    if (camera) {
+        cJSON *t = cJSON_CreateObject();
+        cJSON_AddStringToObject(t, "type", "function");
+        cJSON_AddStringToObject(t, "name", "look");
+        cJSON_AddStringToObject(t, "description", "Take one photo with the device camera and get a description "
+                                                  "answering the question. Takes a few seconds.");
+        cJSON *params = cJSON_AddObjectToObject(t, "parameters");
+        cJSON_AddStringToObject(params, "type", "object");
+        cJSON *q = cJSON_AddObjectToObject(cJSON_AddObjectToObject(params, "properties"), "question");
+        cJSON_AddStringToObject(q, "type", "string");
+        cJSON_AddStringToObject(q, "description", "What to find out from the photo, in the user's words");
+        cJSON_AddItemToArray(cJSON_AddArrayToObject(params, "required"), cJSON_CreateString("question"));
+        cJSON_AddItemToArray(tools, t);
+    }
+}
+
 static void send_session_update(void)
 {
+    const bool camera = s.bot_enabled && app_camera_present();   /* look goes through the relay */
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "type", "session.update");
     cJSON *ss = cJSON_AddObjectToObject(o, "session");
@@ -635,12 +753,13 @@ static void send_session_update(void)
     {
         char now[64];
         app_alarm_format_now(now, sizeof(now));
-        const char *base = s.bot_enabled ? INSTRUCTIONS BOT_INSTRUCTIONS ALARM_INSTRUCTIONS
-                                         : INSTRUCTIONS ALARM_INSTRUCTIONS;
-        const size_t n = strlen(base) + strlen(now) + 48;
+        const char *base = s.bot_enabled ? INSTRUCTIONS BOT_INSTRUCTIONS ALARM_INSTRUCTIONS WORKOUT_INSTRUCTIONS
+                                         : INSTRUCTIONS ALARM_INSTRUCTIONS WORKOUT_INSTRUCTIONS;
+        const char *look = camera ? LOOK_INSTRUCTIONS : "";
+        const size_t n = strlen(base) + strlen(look) + strlen(now) + 48;
         char *ins = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (ins) {
-            snprintf(ins, n, "%s Current local date and time: %s.", base, now);
+            snprintf(ins, n, "%s%s Current local date and time: %s.", base, look, now);
             cJSON_AddStringToObject(ss, "instructions", ins);
             heap_caps_free(ins);
         } else {
@@ -684,6 +803,7 @@ static void send_session_update(void)
         cJSON_AddObjectToObject(cp, "properties");
         cJSON_AddItemToArray(tools, c);
     }
+    add_device_tools(tools, camera);
     if (s.bot_enabled) {
         cJSON *t = cJSON_CreateObject();
         cJSON_AddStringToObject(t, "type", "function");
@@ -758,7 +878,8 @@ static void speak_announcement(const char *text)
 
 static void announce_next_if_ready(void)
 {
-    if (!s.announce_count || s.asleep || s.alarm_ringing || s.state != V_IDLE || voice_audio_playing()) {
+    if (!s.announce_count || s.asleep || s.alarm_ringing || night_active() || s.state != V_IDLE ||
+            voice_audio_playing()) {
         return;
     }
     if (!s.ready) {
@@ -780,6 +901,138 @@ static void announce_next_if_ready(void)
     heap_caps_free(text);
 }
 
+static const char *action_of(const cJSON *a)
+{
+    const cJSON *v = a ? cJSON_GetObjectItemCaseSensitive(a, "action") : NULL;
+    return cJSON_IsString(v) ? v->valuestring : "";
+}
+
+static int int_of(const cJSON *a, const char *key, int dflt)
+{
+    const cJSON *v = a ? cJSON_GetObjectItemCaseSensitive(a, key) : NULL;
+    return cJSON_IsNumber(v) ? (int)v->valuedouble : dflt;
+}
+
+static void tool_timer_control(const char *args, char *out, size_t len)
+{
+    cJSON *a = cJSON_Parse(args);
+    const char *act = action_of(a);
+    app_alarm_timer_t tm;
+    const bool have = app_alarm_timer_get(&tm);
+    if (!have) {
+        snprintf(out, len, "{\"status\":\"no timer set\"}");
+    } else if (!strcmp(act, "reset")) {
+        if (tm.done) {
+            app_alarm_dismiss();
+        }
+        app_alarm_timer_reset();
+        snprintf(out, len, "{\"status\":\"reset\"}");
+    } else if (!strcmp(act, "pause") || !strcmp(act, "resume")) {
+        const bool want_run = !strcmp(act, "resume");
+        if (!tm.done && tm.running != want_run) {
+            app_alarm_timer_toggle();
+        }
+        snprintf(out, len, "{\"status\":\"%s\"}", want_run ? "running" : "paused");
+    } else {
+        const int left = (tm.remaining_ms + 999) / 1000;
+        snprintf(out, len, "{\"remaining\":\"%d:%02d\",\"state\":\"%s\",\"label\":\"%s\"}", left / 60, left % 60,
+                 tm.done ? "done" : tm.running ? "running" : "paused", tm.label);
+    }
+    cJSON_Delete(a);
+}
+
+static void describe_workout(char *out, size_t len, const char *status)
+{
+    app_workout_state_t st;
+    app_workout_get(&st);
+    static const char *const PH[] = { "not started", "get ready", "work", "rest", "done" };
+    if (st.total_s == 0) {
+        snprintf(out, len, "{\"status\":\"%s\",\"plan\":\"stopwatch\",\"phase\":\"%s\",\"elapsed_s\":%d}",
+                 status, PH[st.phase], st.phase == APP_WORKOUT_WORK ? st.phase_left_ms / 1000 : 0);
+        return;
+    }
+    snprintf(out, len, "{\"status\":\"%s\",\"plan\":\"%s %ds work/%ds rest x%d\",\"phase\":\"%s%s\","
+             "\"round\":%d,\"seconds_left_in_phase\":%d,\"total_minutes\":%.1f}",
+             status, st.name, st.plan.work_s, st.plan.rest_s, st.plan.rounds, PH[st.phase],
+             st.paused ? " (paused)" : "", st.round, (st.phase_left_ms + 999) / 1000, st.total_s / 60.0);
+}
+
+static void tool_workout(const char *args, char *out, size_t len)
+{
+    cJSON *a = cJSON_Parse(args);
+    const char *act = action_of(a);
+    if (!strcmp(act, "start")) {
+        const int work = int_of(a, "work_seconds", 0);
+        const int rounds = int_of(a, "rounds", 0);
+        const cJSON *pv = a ? cJSON_GetObjectItemCaseSensitive(a, "preset") : NULL;
+        const int preset = app_workout_preset_from_name(cJSON_IsString(pv) ? pv->valuestring : NULL);
+        bool ok = true;
+        if (work > 0) {
+            const app_workout_plan_t plan = { work, int_of(a, "rest_seconds", 0), rounds > 0 ? rounds : 1 };
+            ok = app_workout_set_custom(&plan) == ESP_OK;
+        } else {
+            app_workout_state_t cur;
+            app_workout_get(&cur);   /* no preset named: whatever is on the screen */
+            app_workout_select(preset >= 0 ? (app_workout_preset_t)preset : cur.preset);
+            if (rounds > 0) {
+                app_workout_state_t st;
+                app_workout_get(&st);
+                app_workout_adjust_rounds(rounds - st.plan.rounds);
+            }
+        }
+        if (!ok) {
+            snprintf(out, len, "{\"status\":\"failed\",\"reason\":\"work 5 s to 99 min, rest up to 99 min, "
+                               "1 to 99 rounds\"}");
+        } else {
+            app_workout_start();
+            show_screen(APP_VOICE_SCREEN_WORKOUT);
+            describe_workout(out, len, "started; 10 second get-ready now");
+        }
+    } else if (!strcmp(act, "pause")) {
+        app_workout_pause();
+        describe_workout(out, len, "paused");
+    } else if (!strcmp(act, "resume")) {
+        app_workout_resume();
+        describe_workout(out, len, "resumed");
+    } else if (!strcmp(act, "stop")) {
+        app_workout_stop();
+        snprintf(out, len, "{\"status\":\"stopped\"}");
+    } else {
+        describe_workout(out, len, "ok");
+    }
+    cJSON_Delete(a);
+}
+
+static void play_beep(app_voice_beep_t p)
+{
+    const int amp = 15000;
+    switch (p) {
+    case APP_VOICE_BEEP_COUNT:
+        voice_audio_tone(880, 140, amp);
+        break;
+    case APP_VOICE_BEEP_START:
+        voice_audio_tone(990, 120, amp);
+        voice_audio_tone(0, 60, 0);
+        voice_audio_tone(990, 120, amp);
+        break;
+    case APP_VOICE_BEEP_WORK:
+        voice_audio_tone(1320, 650, amp);
+        break;
+    case APP_VOICE_BEEP_REST:
+        voice_audio_tone(660, 260, amp);
+        voice_audio_tone(0, 80, 0);
+        voice_audio_tone(660, 260, amp);
+        break;
+    case APP_VOICE_BEEP_DONE:
+        for (int i = 0; i < 3; ++i) {
+            voice_audio_tone(1320, 160, amp);
+            voice_audio_tone(0, 90, 0);
+        }
+        voice_audio_tone(1760, 700, amp);
+        break;
+    }
+}
+
 static void on_bot_event(voice_bot_event_t ev, const char *call_id, const char *text, void *ctx)
 {
     (void)ctx;
@@ -795,6 +1048,9 @@ static void on_bot_event(voice_bot_event_t ev, const char *call_id, const char *
         break;
     case VOICE_BOT_ATTENTION:
         post_msg(EV_BOT_ATTENTION, text, NULL);
+        break;
+    case VOICE_BOT_LOOK_DONE:
+        post_msg(EV_LOOK_DONE, text, call_id);
         break;
     }
 }
@@ -838,11 +1094,15 @@ static void on_event(const msg_t *m)
         announce_next_if_ready();
         break;
     case EV_LOCAL_TOOL: {
-        char out[160] = "";
+        char out[320] = "";
         char *nl = m->text ? strchr(m->text, '\n') : NULL;
         if (nl) {
             *nl = '\0';
-            if (!strcmp(m->text, "cancel_alarms")) {
+            if (!strcmp(m->text, "timer_control")) {
+                tool_timer_control(nl + 1, out, sizeof(out));
+            } else if (!strcmp(m->text, "workout")) {
+                tool_workout(nl + 1, out, sizeof(out));
+            } else if (!strcmp(m->text, "cancel_alarms")) {
                 snprintf(out, sizeof(out), "{\"cancelled\":%d}", app_alarm_cancel_all());
             } else {
                 cJSON *a = cJSON_Parse(nl + 1);
@@ -861,6 +1121,9 @@ static void on_event(const msg_t *m)
                         /* Short relative ones run on the timer screen (works before clock sync). */
                         e = app_alarm_timer_set(secs, label, true);
                         snprintf(when, sizeof(when), "timer started: %d:%02d", secs / 60, secs % 60);
+                        if (e == ESP_OK && !app_workout_active()) {
+                            show_screen(APP_VOICE_SCREEN_TIMER);
+                        }
                     } else if (rel) {
                         e = app_alarm_set_in(secs, label, when, sizeof(when));
                     } else {
@@ -918,6 +1181,9 @@ static void on_event(const msg_t *m)
         break;
     case EV_ALARM_STOP:
         s.alarm_ringing = false;
+        if (!app_alarm_ring_is_timer()) {
+            s.night_lift_until_us = esp_timer_get_time() + NIGHT_LIFT_ALARM_US;   /* morning */
+        }
         voice_audio_flush_playback();
         if (app_alarm_ring_is_timer()) {
             break;   /* a finished timer needs no greeting */
@@ -944,6 +1210,12 @@ static void on_event(const msg_t *m)
     case EV_TAP:
         if (app_alarm_dismiss()) {
             break;   /* a tap silences a ringing alarm */
+        }
+        app_buddy_set_note(s.buddy, APP_BUDDY_NOTE_ALERT, "");   /* seen */
+        if (night_active()) {
+            s.night_lift_until_us = esp_timer_get_time() + NIGHT_LIFT_TAP_US;
+            atomic_store(&s.night_now, false);
+            announce_next_if_ready();
         }
         if (s.asleep) {
             break;
@@ -1052,8 +1324,37 @@ static void on_event(const msg_t *m)
         s.tool_pending = false;
         send_tool_output(m->call_id, "{\"status\":\"failed\",\"reason\":\"couldn't reach " BOT_NAME "\"}");
         break;
+    case EV_BEEP:
+        play_beep((app_voice_beep_t)(m->call_id[0] - '0'));
+        break;
+    case EV_NIGHT:
+        s.night = m->call_id[0] == '1';
+        if (!s.night) {
+            s.night_lift_until_us = 0;
+        }
+        ESP_LOGI(TAG, "night mode %s", s.night ? "on" : "off");
+        update_wake_enable();
+        announce_next_if_ready();
+        break;
+    case EV_LOOK:
+        if (!s.bot_enabled || !voice_bot_look(m->call_id, m->text)) {
+            send_tool_output(m->call_id, "{\"status\":\"failed\",\"reason\":\"camera unavailable\"}");
+            break;
+        }
+        app_buddy_express(s.buddy, APP_BUDDY_EXPR_CURIOUS);
+        app_buddy_set_status(s.buddy, "looking...");
+        break;
+    case EV_LOOK_DONE:
+        app_buddy_set_status(s.buddy, "");
+        if (m->call_id[0]) {
+            send_tool_output(m->call_id, m->text ? m->text : "{\"status\":\"failed\"}");
+        }
+        break;
     case EV_BOT_RESULT:
     case EV_BOT_ATTENTION:
+        if (ev == EV_BOT_ATTENTION) {
+            app_buddy_set_note(s.buddy, APP_BUDDY_NOTE_ALERT, BOT_NAME " needs you");
+        }
         if (ev == EV_BOT_RESULT && s.pending_tasks > 0 && --s.pending_tasks == 0) {
             app_buddy_set_busy(s.buddy, false);
         }
@@ -1084,6 +1385,7 @@ static void on_event(const msg_t *m)
 static void on_tick(void)
 {
     const int64_t now = esp_timer_get_time();
+    atomic_store(&s.night_now, night_active());
     update_wake_enable();   /* playback ending or budget lock expiring re-arms it */
     if (s.alarm_ringing && now >= s.next_chime_us) {
         voice_audio_chime();
@@ -1278,4 +1580,28 @@ void app_voice_set_summary_handler(app_voice_summary_cb_t cb, void *ctx)
 void app_voice_request_summary(void)
 {
     voice_bot_request_summary();
+}
+
+void app_voice_beep(app_voice_beep_t pattern)
+{
+    char id[2] = { (char)('0' + (int)pattern), '\0' };
+    post_msg(EV_BEEP, NULL, id);
+}
+
+void app_voice_set_night(bool night)
+{
+    if (night != s.night) {
+        post_msg(EV_NIGHT, NULL, night ? "1" : "0");
+    }
+}
+
+bool app_voice_night_active(void)
+{
+    return atomic_load(&s.night_now);
+}
+
+void app_voice_set_screen_handler(app_voice_screen_cb_t cb, void *ctx)
+{
+    s.screen_ctx = ctx;
+    s.screen_cb = cb;
 }

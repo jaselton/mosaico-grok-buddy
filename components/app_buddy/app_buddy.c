@@ -14,11 +14,16 @@
 #define GSP_BUNDLE_ENABLE_RAW_IDS 1   /* clock canvas bind (scene-local) */
 #include "bundle_gsp.h"
 #ifdef ESP_PLATFORM
+#include "freertos/FreeRTOS.h"
+#define LINE_LOCK(h) taskENTER_CRITICAL(&(h)->line_lock)
+#define LINE_UNLOCK(h) taskEXIT_CRITICAL(&(h)->line_lock)
 #include "esp_log.h"
 static const char *TAG = "app_buddy";
 #define BUDDY_LOG(...) ESP_LOGI(TAG, __VA_ARGS__)
 #else
 #include <stdio.h>
+#define LINE_LOCK(h) ((void)(h))
+#define LINE_UNLOCK(h) ((void)(h))
 #define BUDDY_LOG(...) (printf(__VA_ARGS__), printf("\n"))
 #endif
 
@@ -127,7 +132,12 @@ struct app_buddy {
     atomic_int pending_state;
     atomic_int level;            /* 0..255 */
     atomic_bool has_level;
-    atomic_bool busy;            /* a background task is running: show slow dots when idle */
+    atomic_bool busy;
+#ifdef ESP_PLATFORM
+    portMUX_TYPE line_lock;
+#endif
+    char status[64];
+    char note[APP_BUDDY_NOTE_COUNT][64];            /* a background task is running: show slow dots when idle */
     bool dots_on;
     float level_smooth;
     app_buddy_tap_cb_t tap_cb;
@@ -148,6 +158,9 @@ struct app_buddy {
     float react_phase;               /* woozy spin angle, radians */
     bool was_asleep;
 };
+
+static void show_line(app_buddy_handle_t h);
+
 
 static void note(struct app_buddy *s, esp_gsp_err_t err)
 {
@@ -637,6 +650,9 @@ static void on_event(esp_gsp_handle_t ui, const esp_gsp_event_t *event, void *ct
         if (s->scene_cb) {
             s->scene_cb(event->scene_id, s->scene_ctx);
         }
+        if (event->scene_id == GSP_BUNDLE_SCENE_BUDDY) {
+            show_line(s);   /* the label is rebuilt with the scene */
+        }
         return;
     }
     if (!gsp_buddy_event_is_tap(event)) {
@@ -761,12 +777,45 @@ void app_buddy_screen_ids(app_buddy_screen_ids_t *out)
     out->usage_week = GSP_USAGE_BIND_UWEEK;
     out->usage_voice = GSP_USAGE_BIND_UVOICE;
     out->usage_upd = GSP_USAGE_BIND_UUPD;
+    out->workout_scene = GSP_BUNDLE_SCENE_WORKOUT;
+    out->workout_canvas = GSP_WORKOUT_BIND_WFACE;
+    out->workout_title = GSP_WORKOUT_BIND_WTITLE;
+    out->workout_phase = GSP_WORKOUT_BIND_WPHASE;
+    out->workout_digits = GSP_WORKOUT_BIND_WDIGITS;
+    out->workout_round = GSP_WORKOUT_BIND_WROUND;
+    out->workout_btn = GSP_WORKOUT_BIND_WBTN;
+}
+
+static void show_line(app_buddy_handle_t h)
+{
+    char line[64];
+    LINE_LOCK(h);
+    const char *t = h->status;
+    for (int i = 0; !t[0] && i < APP_BUDDY_NOTE_COUNT; ++i) {
+        t = h->note[i];
+    }
+    snprintf(line, sizeof(line), "%s", t);
+    LINE_UNLOCK(h);
+    esp_gsp_set_text(h->ui, GSP_BUDDY_BIND_VSTATUS, line);
 }
 
 void app_buddy_set_status(app_buddy_handle_t handle, const char *text)
 {
     if (handle && handle->ui) {
-        esp_gsp_set_text(handle->ui, GSP_BUDDY_BIND_VSTATUS, text ? text : "");
+        LINE_LOCK(handle);
+        snprintf(handle->status, sizeof(handle->status), "%s", text ? text : "");
+        LINE_UNLOCK(handle);
+        show_line(handle);
+    }
+}
+
+void app_buddy_set_note(app_buddy_handle_t handle, app_buddy_note_t slot, const char *text)
+{
+    if (handle && handle->ui && slot < APP_BUDDY_NOTE_COUNT) {
+        LINE_LOCK(handle);
+        snprintf(handle->note[slot], sizeof(handle->note[slot]), "%s", text ? text : "");
+        LINE_UNLOCK(handle);
+        show_line(handle);
     }
 }
 
@@ -809,6 +858,9 @@ esp_gsp_err_t app_buddy_create(esp_gsp_handle_t ui, app_buddy_handle_t *out_hand
         return ESP_GSP_ERR_NO_MEM;
     }
     s->ui = ui;
+#ifdef ESP_PLATFORM
+    s->line_lock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+#endif
     s->rng = 0x6b6f7275u;
     s->shown_frame = F_OPEN;     /* scene starts with the open frames visible */
     s->blink_pos = -1;

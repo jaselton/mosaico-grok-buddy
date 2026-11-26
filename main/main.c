@@ -6,6 +6,12 @@
 #include "app_clock.h"
 #include "app_motion.h"
 #include "app_voice.h"
+#include "app_workout.h"
+#include "app_camera.h"
+#include "bsp/display.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include "esp_iris.h"
 #include "esp_log.h"
 #include "iris_ota_support.h"
@@ -64,6 +70,84 @@ static void on_scene(uint16_t scene_id, void *ctx)
     app_clock_scene_changed(scene_id);
 }
 
+/* Beeps for the workout timer; Grok starting one also brings its screen up. */
+static void on_workout(app_workout_event_t ev, int arg, void *ctx)
+{
+    (void)ctx;
+    switch (ev) {
+    case APP_WORKOUT_EV_START:
+        app_voice_beep(APP_VOICE_BEEP_START);
+        break;
+    case APP_WORKOUT_EV_COUNT:
+        app_voice_beep(APP_VOICE_BEEP_COUNT);
+        break;
+    case APP_WORKOUT_EV_PHASE:
+        app_voice_beep(arg == APP_WORKOUT_REST ? APP_VOICE_BEEP_REST : APP_VOICE_BEEP_WORK);
+        break;
+    case APP_WORKOUT_EV_DONE:
+        app_voice_beep(APP_VOICE_BEEP_DONE);
+        break;
+    case APP_WORKOUT_EV_STOP:
+        break;
+    }
+}
+
+static app_buddy_screen_ids_t s_ids;
+
+static void on_show_screen(app_voice_screen_t scr, void *ctx)
+{
+    (void)ctx;
+    esp_gsp_goto_scene(application.ui, scr == APP_VOICE_SCREEN_WORKOUT ? s_ids.workout_scene : s_ids.timer_scene,
+                       ESP_GSP_CROSS_FADE);
+}
+
+/* Usage warning under the eyes; a worried look when it first appears. */
+static void on_usage_note(const char *note)
+{
+    static char last[64];
+    if (strcmp(last, note) != 0) {
+        if (note[0] && !last[0]) {
+            app_buddy_express(application.controller, APP_BUDDY_EXPR_SAD);
+        }
+        snprintf(last, sizeof(last), "%s", note);
+        app_buddy_set_note(application.controller, APP_BUDDY_NOTE_USAGE, note);
+    }
+}
+
+/* Night mode 22:00-06:00: dim screen, sleepy face, no wake word, messages
+ * held. Not while a workout, timer or alarm is going. Runs on the UI task. */
+#define NIGHT_START_H 22
+#define NIGHT_END_H   6
+#define DAY_BRIGHTNESS   100
+#define NIGHT_BRIGHTNESS 12
+
+static void night_tick(esp_gsp_handle_t ui, void *ctx)
+{
+    (void)ui;
+    (void)ctx;
+    static int shown = -1;
+    bool night = false;
+    if (app_alarm_time_valid()) {
+        time_t now = time(NULL);
+        struct tm lt;
+        localtime_r(&now, &lt);
+        night = lt.tm_hour >= NIGHT_START_H || lt.tm_hour < NIGHT_END_H;
+    }
+    app_alarm_timer_t tm;
+    if (app_workout_active() || app_alarm_ringing() ||
+            (app_alarm_timer_get(&tm) && tm.running)) {
+        night = false;
+    }
+    app_voice_set_night(night);
+    const bool dim = night && app_voice_night_active();
+    if (dim != shown) {
+        shown = dim;
+        bsp_display_brightness_set(dim ? NIGHT_BRIGHTNESS : DAY_BRIGHTNESS);
+        app_buddy_set_sleep(application.controller, dim);
+        ESP_LOGI(TAG, "night %s", dim ? "dim" : "bright");
+    }
+}
+
 static void on_pet(void *ctx)
 {
     (void)ctx;
@@ -97,6 +181,7 @@ void app_main(void)
     /* GSP retains the callback context. Device UI/controller live until reboot;
      * teardown requires quiescing GSP before app_buddy_destroy(), then closing UI. */
     /* Wi-Fi and the xAI key come from Vibe Mode shared settings; app_voice owns them. */
+    ESP_ERROR_CHECK_WITHOUT_ABORT(app_workout_init(on_workout, NULL));
     const app_voice_config_t voice = { .buddy = application.controller };
     const esp_err_t voice_err = app_voice_start(&voice);
     if (voice_err == ESP_OK) {
@@ -113,6 +198,7 @@ void app_main(void)
     }
     app_buddy_screen_ids_t ids;
     app_buddy_screen_ids(&ids);
+    s_ids = ids;
     const app_clock_ids_t clock_ids = {
         .clock_scene = ids.clock_scene, .clock_canvas = ids.clock_canvas,
         .timer_scene = ids.timer_scene, .timer_canvas = ids.timer_canvas,
@@ -120,11 +206,24 @@ void app_main(void)
         .usage_scene = ids.usage_scene, .usage_canvas = ids.usage_canvas, .usage_title = ids.usage_title,
         .usage_money = ids.usage_money, .usage_msub = ids.usage_msub, .usage_week = ids.usage_week,
         .usage_voice = ids.usage_voice, .usage_upd = ids.usage_upd,
+        .workout_scene = ids.workout_scene, .workout_canvas = ids.workout_canvas,
+        .workout_title = ids.workout_title, .workout_phase = ids.workout_phase,
+        .workout_digits = ids.workout_digits, .workout_round = ids.workout_round, .workout_btn = ids.workout_btn,
     };
     if (app_clock_start(application.ui, &clock_ids) == ESP_OK) {
         app_buddy_set_scene_handler(application.controller, on_scene, NULL);
+        app_clock_set_usage_note_handler(on_usage_note);
+    }
+    if (voice_err == ESP_OK) {
+        app_voice_set_screen_handler(on_show_screen, NULL);
+        esp_gsp_timer_create(application.ui, 2000, night_tick, NULL);
     }
     heap_mark("ready");
+    /* Last, so the camera probe's short-lived tasks don't split the DMA heap. */
+    if (app_camera_init() != ESP_OK) {
+        ESP_LOGW(TAG, "camera support unavailable");
+    }
+    heap_mark("after camera probe");
     if (voice_err == ESP_OK) {
         ESP_LOGI(TAG, "Grok desk buddy ready (tap to talk)");
     } else {

@@ -24,3 +24,9 @@ CONFIG_ESP_WIFI_RX_BA_WIN=6
 # Keep fast internal RAM for the display/Wi-Fi DMA: only allocations up to 1 KB
 # default to internal (was 4 KB); larger ones go to PSRAM.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
+
+# Optional camera module (left slot) for Grok's "look" tool. Only streams
+# during a capture; the buddy runs the same without the module.
+CONFIG_MOSAICO_MODULE_CAMERA=y
+CONFIG_CAMERA_OV3640_DVP_DEFAULT_FMT_YUV422_UYVY_1024X768_25FPS=y
+CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=y

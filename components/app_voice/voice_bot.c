@@ -18,6 +18,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "voice_internal.h"
+#include "app_camera.h"
 
 static const char *TAG = "voice_bot";
 
@@ -31,7 +32,8 @@ static const char *TAG = "voice_bot";
 
 typedef struct {
     char call_id[VOICE_CALL_ID_MAX];
-    char *task;
+    char *task;          /* task text, or the question for a look */
+    bool look;
 } job_t;
 
 static struct {
@@ -108,6 +110,70 @@ static void send_job(job_t *j)
     b.cb(ok ? VOICE_BOT_SENT : VOICE_BOT_SEND_FAILED, j->call_id, NULL, b.ctx);
 }
 
+/* Photo -> relay /look (vision model) -> tool output JSON for Grok. */
+static void do_look(job_t *j)
+{
+    char out[1200];
+    uint8_t *jpg = NULL;
+    size_t len = 0;
+    const esp_err_t cam = app_camera_capture_jpeg(&jpg, &len);
+    if (cam != ESP_OK) {
+        snprintf(out, sizeof(out), "{\"status\":\"failed\",\"reason\":\"%s\"}",
+                 cam == ESP_ERR_NOT_FOUND ? "no camera is plugged in" : "the camera didn't take a picture");
+        b.cb(VOICE_BOT_LOOK_DONE, j->call_id, out, b.ctx);
+        return;
+    }
+    /* The question travels in a header: printable ASCII only, short. */
+    char q[300];
+    size_t k = 0;
+    for (const char *p = j->task ? j->task : ""; *p && k < sizeof(q) - 1; ++p) {
+        q[k++] = (*p >= 32 && *p < 127) ? *p : ' ';
+    }
+    q[k] = '\0';
+    char url[URL_MAX + 16];
+    snprintf(url, sizeof(url), "%s/look", b.base);
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 30000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .event_handler = on_http,
+        .disable_auto_redirect = true,
+    };
+    int status = 0;
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (c) {
+        esp_http_client_set_header(c, "Authorization", b.auth);
+        esp_http_client_set_header(c, "Content-Type", "image/jpeg");
+        esp_http_client_set_header(c, "X-Question", q);
+        esp_http_client_set_post_field(c, (const char *)jpg, (int)len);
+        b.resp_len = 0;
+        const esp_err_t err = esp_http_client_perform(c);
+        status = err == ESP_OK ? esp_http_client_get_status_code(c) : 0;
+        esp_http_client_cleanup(c);
+        b.resp[b.resp_len] = '\0';
+    }
+    heap_caps_free(jpg);
+    ESP_LOGI(TAG, "look: %u byte photo, HTTP %d", (unsigned)len, status);
+    cJSON *root = status == 200 ? cJSON_Parse(b.resp) : NULL;
+    const cJSON *ans = root ? cJSON_GetObjectItemCaseSensitive(root, "answer") : NULL;
+    cJSON *o = cJSON_CreateObject();
+    if (cJSON_IsString(ans)) {
+        cJSON_AddStringToObject(o, "status", "ok");
+        cJSON_AddStringToObject(o, "what_the_camera_sees", ans->valuestring);
+    } else {
+        cJSON_AddStringToObject(o, "status", "failed");
+        cJSON_AddStringToObject(o, "reason", status == 402 ? "Grok credits are used up" :
+                                status == 429 ? "too many looks today" : "couldn't reach the vision model");
+    }
+    char *txt = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    cJSON_Delete(root);
+    snprintf(out, sizeof(out), "%s", txt ? txt : "{\"status\":\"failed\"}");
+    cJSON_free(txt);
+    b.cb(VOICE_BOT_LOOK_DONE, j->call_id, out, b.ctx);
+}
+
 static void poll_results(void)
 {
     const int status = request(HTTP_METHOD_GET, "/results", NULL);
@@ -148,6 +214,15 @@ static void bot_task(void *arg)
     for (;;) {
         job_t j;
         if (xQueueReceive(b.q, &j, pdMS_TO_TICKS(500)) == pdTRUE) {
+            if (j.look) {
+                if (voice_wifi_wait_connected(5000)) {
+                    do_look(&j);
+                } else {
+                    b.cb(VOICE_BOT_LOOK_DONE, j.call_id, "{\"status\":\"failed\",\"reason\":\"no Wi-Fi\"}", b.ctx);
+                }
+                heap_caps_free(j.task);
+                continue;
+            }
             if (voice_wifi_wait_connected(5000)) {
                 send_job(&j);
             } else {
@@ -189,7 +264,7 @@ esp_err_t voice_bot_start(const char *base_url, const char *token, voice_bot_cb_
     if (!b.resp || !b.q) {
         return ESP_ERR_NO_MEM;
     }
-    if (xTaskCreateWithCaps(bot_task, "voice_bot", 6144, NULL, 4, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
+    if (xTaskCreateWithCaps(bot_task, "voice_bot", 12288, NULL, 4, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "Grok Bot relay ready");
@@ -209,6 +284,27 @@ bool voice_bot_send(const char *call_id, const char *task)
         return false;
     }
     memcpy(j.task, task, n);
+    if (xQueueSend(b.q, &j, 0) != pdTRUE) {
+        heap_caps_free(j.task);
+        return false;
+    }
+    return true;
+}
+
+bool voice_bot_look(const char *call_id, const char *question)
+{
+    if (!b.q) {
+        return false;
+    }
+    job_t j = { .look = true };
+    snprintf(j.call_id, sizeof(j.call_id), "%s", call_id ? call_id : "");
+    const char *qs = question ? question : "";
+    const size_t n = strlen(qs) + 1;
+    j.task = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!j.task) {
+        return false;
+    }
+    memcpy(j.task, qs, n);
     if (xQueueSend(b.q, &j, 0) != pdTRUE) {
         heap_caps_free(j.task);
         return false;

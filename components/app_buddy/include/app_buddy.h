@@ -100,6 +100,7 @@ typedef struct {
     uint16_t clock_scene, clock_canvas;
     uint16_t timer_scene, timer_canvas, timer_digits, timer_sub, timer_reset;
     uint16_t usage_scene, usage_canvas, usage_title, usage_money, usage_msub, usage_week, usage_voice, usage_upd;
+    uint16_t workout_scene, workout_canvas, workout_title, workout_phase, workout_digits, workout_round, workout_btn;
 } app_buddy_screen_ids_t;
 void app_buddy_screen_ids(app_buddy_screen_ids_t *out);
 
@@ -108,6 +109,14 @@ void app_buddy_set_busy(app_buddy_handle_t handle, bool busy);
 
 /** One line under the eyes (e.g. why voice is unavailable); "" hides it. Any task. */
 void app_buddy_set_status(app_buddy_handle_t handle, const char *text);
+
+/** Standing notes for that line, shown when no status is set (alert first). Any task. */
+typedef enum {
+    APP_BUDDY_NOTE_ALERT = 0,   /* e.g. the bot needs you */
+    APP_BUDDY_NOTE_USAGE,       /* e.g. Grok usage nearly used up */
+    APP_BUDDY_NOTE_COUNT,
+} app_buddy_note_t;
+void app_buddy_set_note(app_buddy_handle_t handle, app_buddy_note_t slot, const char *text);
 
 /** Route taps to cb instead of cycling states; NULL restores cycling.
  * Call from the UI loop or once right after create. */

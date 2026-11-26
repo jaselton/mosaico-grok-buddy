@@ -553,6 +553,9 @@ static bool on_input(esp_gsp_handle_t ui, int32_t x, int32_t y, bool pressed, vo
     if (timer_face_active()) {
         return timer_face_input(x, y, pressed);
     }
+    if (workout_face_active()) {
+        return workout_face_input(x, y, pressed);
+    }
     if (c.current_scene != c.scene) {
         return false;
     }
@@ -647,11 +650,17 @@ static bool on_input(esp_gsp_handle_t ui, int32_t x, int32_t y, bool pressed, vo
     return false;
 }
 
+void app_clock_set_usage_note_handler(app_clock_usage_note_cb_t cb)
+{
+    usage_face_set_note_handler(cb);
+}
+
 void app_clock_scene_changed(uint16_t scene_id)
 {
     c.current_scene = scene_id;
     timer_face_scene_changed(scene_id);
     usage_face_scene_changed(scene_id);
+    workout_face_scene_changed(scene_id);
     if (scene_id == c.scene && c.ui && c.bg) {
         /* Binds are scene-scoped and the scene is rebuilt on arrival, so the
          * draw callback is (re)registered each time the clock is shown. */
@@ -680,6 +689,12 @@ esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids)
                                     ids->usage_msub, ids->usage_week, ids->usage_voice, ids->usage_upd };
     if (usage_face_start(ui, &uids) != ESP_OK) {
         ESP_LOGE(TAG, "usage screen unavailable");
+    }
+    const workout_face_ids_t wids = { ids->workout_scene, ids->workout_canvas, ids->workout_title,
+                                      ids->workout_phase, ids->workout_digits, ids->workout_round,
+                                      ids->workout_btn };
+    if (workout_face_start(ui, &wids) != ESP_OK) {
+        ESP_LOGE(TAG, "workout screen unavailable");
     }
     if (timer_face_start(ui, ids->timer_scene, ids->timer_canvas, ids->timer_digits, ids->timer_sub,
                          ids->timer_reset) != ESP_OK) {

@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "bsp/esp_mosaico.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -200,7 +201,7 @@ static StreamBufferHandle_t psram_stream(size_t bytes)
 static void capture_task(void *arg)
 {
     (void)arg;
-    static int16_t in[CODEC_FRAMES * CODEC_CHANNELS];
+    EXT_RAM_BSS_ATTR static int16_t in[CODEC_FRAMES * CODEC_CHANNELS];   /* I2S copies; PSRAM is fine */
     static int16_t out[UP_SAMPLES];
     for (;;) {
         if (esp_codec_dev_read(s_mic, in, sizeof(in)) != ESP_CODEC_DEV_OK) {
@@ -232,7 +233,7 @@ static void playback_task(void *arg)
 {
     (void)arg;
     static int16_t in[DOWN_SAMPLES];
-    static int16_t out[CODEC_FRAMES * CODEC_CHANNELS];
+    EXT_RAM_BSS_ATTR static int16_t out[CODEC_FRAMES * CODEC_CHANNELS];
     bool streaming = false;       /* false while (re)filling the jitter buffer */
     bool mid_reply = false;       /* ran dry during a reply: use the resume threshold */
     int64_t last_audio_us = 0;
@@ -421,5 +422,29 @@ void voice_audio_chime(void)
         }
         voice_audio_play((const uint8_t *)buf, (size_t)n * sizeof(int16_t));
     }
+    heap_caps_free(buf);
+}
+
+void voice_audio_tone(float hz, int ms, int amplitude)
+{
+    const int n = VOICE_DOWNLINK_RATE * ms / 1000;
+    const int fade = VOICE_DOWNLINK_RATE * 8 / 1000;
+    if (n <= 0) {
+        return;
+    }
+    int16_t *buf = heap_caps_malloc((size_t)n * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        return;
+    }
+    for (int i = 0; i < n; ++i) {
+        float env = 1.0f;
+        if (i < fade) {
+            env = (float)i / fade;
+        } else if (i > n - fade) {
+            env = (float)(n - i) / fade;
+        }
+        buf[i] = hz > 0 ? (int16_t)(amplitude * env * sinf(2.0f * 3.14159265f * hz * i / VOICE_DOWNLINK_RATE)) : 0;
+    }
+    voice_audio_play((const uint8_t *)buf, (size_t)n * sizeof(int16_t));
     heap_caps_free(buf);
 }

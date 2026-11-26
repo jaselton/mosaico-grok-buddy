@@ -25,6 +25,50 @@ const MAX_BODY_BYTES = 16 * 1024;
 const TASKS_PER_HOUR = 30;          // cost guard: each task starts a Grok Bot run
 const RESULTS_PER_HOUR = 120;
 const KEEP_MS = 24 * 3600 * 1000;   // prune rows older than a day
+const MAX_PHOTO_BYTES = 400 * 1024;
+const LOOKS_PER_DAY = 150;          // cost guard for the camera tool
+const DEFAULT_VISION_MODEL = "grok-4.20-0309-non-reasoning";
+
+function b64(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+// Device photo -> xAI vision model -> short spoken-style answer. The photo is
+// never stored; only a per-day count is kept.
+async function look(req, env, stub) {
+  const len = Number(req.headers.get("content-length") || 0);
+  if (len > MAX_PHOTO_BYTES) return json({ ok: false, error: "photo too large" }, 413);
+  const photo = await req.arrayBuffer();
+  if (!photo.byteLength || photo.byteLength > MAX_PHOTO_BYTES) return json({ ok: false, error: "bad photo" }, 400);
+  const admit = await stub.admitLook(LOOKS_PER_DAY);
+  if (!admit.ok) return json({ ok: false, error: "daily look limit" }, 429);
+  const question = (req.headers.get("x-question") || "What do you see?").slice(0, 300);
+  const r = await fetch("https://api.x.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.XAI_API_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: env.VISION_MODEL || DEFAULT_VISION_MODEL,
+      max_tokens: 220,
+      messages: [
+        { role: "system", content: "You are the eyes of a small desk/garage robot. Answer the user's question about "
+          + "this photo from its camera in one to three short spoken sentences, no lists or markdown. If you can't "
+          + "tell, say what you can see. Read any visible text if it helps." },
+        { role: "user", content: [
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64(photo)}`, detail: "high" } },
+          { type: "text", text: question },
+        ] },
+      ],
+    }),
+  });
+  if (!r.ok) return json({ ok: false, error: `vision upstream ${r.status}` }, r.status === 402 ? 402 : 502);
+  const j = await r.json();
+  const answer = j?.choices?.[0]?.message?.content;
+  if (typeof answer !== "string" || !answer.trim()) return json({ ok: false, error: "empty answer" }, 502);
+  return json({ ok: true, answer: answer.trim().slice(0, 900) });
+}
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
@@ -169,6 +213,11 @@ export default {
       return json(await stub.summary(limitMin, rate));
     }
 
+    if (url.pathname === "/look" && req.method === "POST") {
+      if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
+      return look(req, env, stub);
+    }
+
     if (url.pathname === "/results" && req.method === "GET") {
       if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
       return json(await stub.takeResults());
@@ -190,6 +239,19 @@ export class Relay extends DurableObject {
       seq INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT, text TEXT, status TEXT,
       created INTEGER NOT NULL, delivered INTEGER NOT NULL DEFAULT 0)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL, at INTEGER NOT NULL)`);
+  }
+
+  admitLook(perDay) {
+    const day = new Date().toLocaleDateString("en-CA", { timeZone: this.tz });
+    const row = this.sql.exec("SELECT v FROM kv WHERE k = 'looks'").toArray()[0];
+    let st = { day, n: 0 };
+    try { if (row) st = JSON.parse(row.v); } catch {}
+    if (st.day !== day) st = { day, n: 0 };
+    if (st.n >= perDay) return { ok: false };
+    st.n += 1;
+    this.sql.exec("INSERT INTO kv (k, v, at) VALUES ('looks', ?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, at = excluded.at",
+      JSON.stringify(st), Date.now());
+    return { ok: true, n: st.n };
   }
 
   setTeam(v) {

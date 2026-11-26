@@ -42,6 +42,8 @@ void voice_audio_flush_playback(void);
 bool voice_audio_playing(void);
 /** Queue a short two-tone chime ahead of an announcement. */
 void voice_audio_chime(void);
+/** Queue a plain tone (hz = 0: silence) at amplitude 0..32767. */
+void voice_audio_tone(float hz, int ms, int amplitude);
 
 /* ---- Grok Bot relay (voice_bot.c) ---- */
 
@@ -52,6 +54,7 @@ typedef enum {
     VOICE_BOT_SEND_FAILED,   /* call_id: relay or Wi-Fi unavailable */
     VOICE_BOT_RESULT,        /* text: the bot's spoken answer */
     VOICE_BOT_ATTENTION,     /* text: the bot is waiting on the owner (card, choice) */
+    VOICE_BOT_LOOK_DONE,     /* call_id; text: tool output JSON for the look tool */
 } voice_bot_event_t;
 
 /** Called on the relay task; must copy text and return quickly. */
@@ -61,6 +64,8 @@ typedef void (*voice_bot_cb_t)(voice_bot_event_t ev, const char *call_id, const 
 esp_err_t voice_bot_start(const char *base_url, const char *token, voice_bot_cb_t cb, void *ctx);
 /** Queue a task for the bot; false if the queue is full or out of memory. */
 bool voice_bot_send(const char *call_id, const char *task);
+/** Take a photo and ask the relay's vision model; answers with VOICE_BOT_LOOK_DONE. */
+bool voice_bot_look(const char *call_id, const char *question);
 
 /* Usage summary (relay GET /summary), fetched on the bot task. json is NULL on failure. */
 typedef void (*voice_summary_cb_t)(const char *json, void *ctx);
