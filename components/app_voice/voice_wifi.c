@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-/* Wi-Fi station: connect with Vibe Mode credentials and keep reconnecting. */
+/* Wi-Fi station: connect with Vibe Mode credentials and keep reconnecting.
+ * An optional backup network (e.g. a phone hotspot) is tried after the current
+ * one fails twice in a row, alternating until one connects. */
 #include <string.h>
 
 #include "esp_event.h"
@@ -19,11 +21,34 @@ static const char *TAG = "voice_wifi";
 
 static EventGroupHandle_t s_events;
 static TimerHandle_t s_retry_timer;
+#define FAILS_BEFORE_SWITCH 2
+
 static uint32_t s_retry_ms = RETRY_MIN_MS;
+static wifi_config_t s_nets[3];
+static int s_net_count;
+static int s_net;
+static int s_fails;
+static bool s_switch;
+
+static void fill_config(wifi_config_t *wc, const char *ssid, const char *password)
+{
+    memset(wc, 0, sizeof(*wc));
+    /* Fields need no NUL at full length (32-byte SSID, 64-hex PSK). */
+    memcpy(wc->sta.ssid, ssid, strnlen(ssid, sizeof(wc->sta.ssid)));
+    memcpy(wc->sta.password, password, strnlen(password, sizeof(wc->sta.password)));
+    wc->sta.threshold.authmode = password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    wc->sta.pmf_cfg.capable = true;
+}
 
 static void retry_cb(TimerHandle_t t)
 {
     (void)t;
+    if (s_switch) {
+        s_switch = false;
+        s_net = (s_net + 1) % s_net_count;
+        esp_wifi_set_config(WIFI_IF_STA, &s_nets[s_net]);
+        ESP_LOGI(TAG, "trying %s network", s_net ? "backup" : "saved");
+    }
     esp_wifi_connect();
 }
 
@@ -35,6 +60,11 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *d = data;
         xEventGroupClearBits(s_events, BIT_CONNECTED);
+        if (s_net_count > 1 && ++s_fails >= FAILS_BEFORE_SWITCH) {
+            s_fails = 0;
+            s_switch = true;
+            s_retry_ms = RETRY_MIN_MS;
+        }
         ESP_LOGW(TAG, "disconnected (reason %d); retry in %lu ms", d ? d->reason : -1,
                  (unsigned long)s_retry_ms);
         xTimerChangePeriod(s_retry_timer, pdMS_TO_TICKS(s_retry_ms), 0);
@@ -44,11 +74,13 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         const ip_event_got_ip_t *e = data;
         ESP_LOGI(TAG, "connected, ip " IPSTR, IP2STR(&e->ip_info.ip));
         s_retry_ms = RETRY_MIN_MS;
+        s_fails = 0;
         xEventGroupSetBits(s_events, BIT_CONNECTED);
     }
 }
 
-esp_err_t voice_wifi_start(const char *ssid, const char *password)
+esp_err_t voice_wifi_start(const char *ssid, const char *password, const char *backup_ssid,
+                           const char *backup_password)
 {
     s_events = xEventGroupCreate();
     s_retry_timer = xTimerCreate("wifi_retry", pdMS_TO_TICKS(RETRY_MIN_MS), pdFALSE, NULL, retry_cb);
@@ -78,25 +110,38 @@ esp_err_t voice_wifi_start(const char *ssid, const char *password)
         return err;
     }
 
-    wifi_config_t wc = { 0 };
-    /* Fields need no NUL at full length (32-byte SSID, 64-hex PSK). */
-    const size_t ssid_len = strnlen(ssid, sizeof(wc.sta.ssid));
-    const size_t pass_len = strnlen(password, sizeof(wc.sta.password));
-    memcpy(wc.sta.ssid, ssid, ssid_len);
-    memcpy(wc.sta.password, password, pass_len);
-    wc.sta.threshold.authmode = password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
-    wc.sta.pmf_cfg.capable = true;
+    s_net_count = 0;
+    if (ssid && ssid[0]) {
+        fill_config(&s_nets[s_net_count++], ssid, password ? password : "");
+    }
+    if (backup_ssid && backup_ssid[0]) {
+        const char *bp = backup_password ? backup_password : "";
+        fill_config(&s_nets[s_net_count++], backup_ssid, bp);
+        /* iPhones name hotspots with a curly apostrophe (John’s iPhone); also
+         * try that spelling when the name was typed with a straight one. */
+        const char *q = strchr(backup_ssid, '\'');
+        if (q) {
+            char alt[40];
+            size_t pre = (size_t)(q - backup_ssid);
+            int n = snprintf(alt, sizeof(alt), "%.*s\xE2\x80\x99%s", (int)pre, backup_ssid, q + 1);
+            if (n > 0 && n <= 32) {
+                fill_config(&s_nets[s_net_count++], alt, bp);
+            }
+        }
+    }
+    if (!s_net_count) {
+        return ESP_ERR_NOT_FOUND;
+    }
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err == ESP_OK) {
-        err = esp_wifi_set_config(WIFI_IF_STA, &wc);
+        err = esp_wifi_set_config(WIFI_IF_STA, &s_nets[0]);
     }
-    memset(&wc, 0, sizeof(wc));
     if (err == ESP_OK) {
         /* Modem sleep adds latency to streamed audio; the device is USB powered. */
         esp_wifi_set_ps(WIFI_PS_NONE);
         err = esp_wifi_start();
     }
-    ESP_LOGI(TAG, "station starting for saved network");
+    ESP_LOGI(TAG, "station starting (%d network%s)", s_net_count, s_net_count > 1 ? "s, backup after 2 failures" : "");
     return err;
 }
 

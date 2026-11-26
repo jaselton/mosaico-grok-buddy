@@ -1132,6 +1132,10 @@ static void control_task(void *arg)
 /* Build-time secrets from secrets/ (see CMakeLists.txt); each may be empty. */
 extern const char xai_key_start[] asm("_binary_xai_api_key_start");
 extern const char xai_key_end[] asm("_binary_xai_api_key_end");
+extern const char wifi2_ssid_start[] asm("_binary_wifi2_ssid_start");
+extern const char wifi2_ssid_end[] asm("_binary_wifi2_ssid_end");
+extern const char wifi2_password_start[] asm("_binary_wifi2_password_start");
+extern const char wifi2_password_end[] asm("_binary_wifi2_password_end");
 extern const char relay_url_start[] asm("_binary_relay_url_start");
 extern const char relay_url_end[] asm("_binary_relay_url_end");
 extern const char relay_token_start[] asm("_binary_relay_token_start");
@@ -1204,15 +1208,19 @@ esp_err_t app_voice_start(const app_voice_config_t *config)
         strcpy(s.voice, DEFAULT_VOICE);
     }
 
-    app_config_wifi_t wifi;
+    app_config_wifi_t wifi = { 0 };
+    char ssid2[33] = "", pass2[65] = "";
+    load_embedded(wifi2_ssid_start, wifi2_ssid_end, ssid2, sizeof(ssid2));
+    load_embedded(wifi2_password_start, wifi2_password_end, pass2, sizeof(pass2));
     err = app_config_load_wifi(&wifi);
-    if (err != ESP_OK) {
+    if (err != ESP_OK && !ssid2[0]) {
         ESP_LOGW(TAG, "Wi-Fi not configured in Vibe Mode (%s); voice disabled", esp_err_to_name(err));
         mbedtls_platform_zeroize(s.auth_header, sizeof(s.auth_header));
         return ESP_ERR_NOT_FOUND;
     }
-    err = voice_wifi_start(wifi.ssid, wifi.password);
+    err = voice_wifi_start(wifi.ssid, wifi.password, ssid2, pass2);
     mbedtls_platform_zeroize(&wifi, sizeof(wifi));
+    mbedtls_platform_zeroize(pass2, sizeof(pass2));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi start failed: %s", esp_err_to_name(err));
         return err;

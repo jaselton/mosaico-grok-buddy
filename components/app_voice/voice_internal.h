@@ -15,7 +15,8 @@
 /* ---- Wi-Fi station (voice_wifi.c) ---- */
 
 /** Start the station with the given credentials and keep it reconnecting. */
-esp_err_t voice_wifi_start(const char *ssid, const char *password);
+esp_err_t voice_wifi_start(const char *ssid, const char *password, const char *backup_ssid,
+                           const char *backup_password);
 /** Wait up to timeout_ms for an IP address; true when connected. */
 bool voice_wifi_wait_connected(uint32_t timeout_ms);
 
