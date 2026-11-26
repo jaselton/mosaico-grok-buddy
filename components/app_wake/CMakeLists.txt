@@ -14,10 +14,10 @@ idf_component_register(
     PRIV_REQUIRES log espressif__esp-tflite-micro)
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error -Wno-unused-variable -Wno-sign-compare)
 
-# Optional model: projects/grok_desk_buddy/wakeword/hi_grok.tflite (git-ignored;
+# Optional model: projects/grok_desk_buddy/wakeword/wake_word.tflite (git-ignored;
 # trained locally, see wakeword/README.md). Missing -> empty placeholder, wake word off.
-set(MODEL_SRC "${CMAKE_CURRENT_LIST_DIR}/../../wakeword/hi_grok.tflite")
-set(MODEL_DST "${CMAKE_CURRENT_BINARY_DIR}/hi_grok.tflite")
+set(MODEL_SRC "${CMAKE_CURRENT_LIST_DIR}/../../wakeword/wake_word.tflite")
+set(MODEL_DST "${CMAKE_CURRENT_BINARY_DIR}/wake_word.tflite")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../../wakeword")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/../../wakeword")
 if(EXISTS "${MODEL_SRC}")

@@ -41,6 +41,13 @@ enum { F_OPEN = 0, F_THINK, F_B1, F_B2, F_B3 };
 #define DIZZY_MS   2600
 #define HAPPY_MS   2200
 #define STARTLE_MS 900
+/* Woozy sequence (ms from start): fast spin, winding down, hard blinks,
+ * shaking it off, settling back. */
+#define WOOZY_FAST_END   1500
+#define WOOZY_SLOW_END   3500
+#define WOOZY_BLINK_END  5000
+#define WOOZY_SHAKE_END  6000
+#define WOOZY_MS         6500
 
 typedef esp_gsp_err_t (*vis_fn_t)(esp_gsp_handle_t, bool);
 
@@ -117,6 +124,7 @@ struct app_buddy {
     atomic_int tilt_x, tilt_y;       /* -100..100 */
     int react;                       /* active reaction or -1 */
     uint32_t react_start_ms, react_until_ms;
+    float react_phase;               /* woozy spin angle, radians */
     bool was_asleep;
 };
 
@@ -298,8 +306,10 @@ static void tick(esp_gsp_handle_t ui, void *ctx)
     if (react_req >= 0) {
         s->react = react_req;
         s->react_start_ms = s->t_ms;
+        s->react_phase = 0;
         s->react_until_ms = s->t_ms + (react_req == APP_BUDDY_REACT_DIZZY  ? DIZZY_MS
                                        : react_req == APP_BUDDY_REACT_HAPPY ? HAPPY_MS
+                                       : react_req == APP_BUDDY_REACT_WOOZY ? WOOZY_MS
                                                                             : STARTLE_MS);
     }
     if (s->react >= 0 && s->t_ms >= s->react_until_ms) {
@@ -347,6 +357,36 @@ static void tick(esp_gsp_handle_t ui, void *ctx)
         case APP_BUDDY_REACT_HAPPY:
             rdy = -10.0f + 4.0f * sinf(k / 140.0f);
             rframe = F_B1;   /* happy squint */
+            break;
+        case APP_BUDDY_REACT_WOOZY:
+            if (k < WOOZY_SLOW_END) {
+                /* Spin: ~4 turns/s, then wind down to ~0.4 turns/s while the circle tightens. */
+                float omega = 0.025f;   /* rad per ms */
+                float r = 28.0f;
+                if (k >= WOOZY_FAST_END) {
+                    const float u = (k - WOOZY_FAST_END) / (float)(WOOZY_SLOW_END - WOOZY_FAST_END);
+                    omega = 0.025f + (0.0025f - 0.025f) * u;
+                    r = 28.0f - 14.0f * u;
+                }
+                s->react_phase += omega * TICK_MS;
+                rdx = r * cosf(s->react_phase);
+                rdy = r * sinf(s->react_phase);
+                rframe = F_OPEN;
+            } else if (k < WOOZY_BLINK_END) {
+                /* Three hard blinks: squeezed shut 300 ms, open 200 ms, eyes drooping. */
+                const uint32_t b = (uint32_t)(k - WOOZY_SLOW_END) % 500;
+                rframe = b < 40 ? F_B2 : (b < 300 ? F_B3 : (b < 340 ? F_B2 : F_OPEN));
+                rdy = 8.0f;
+            } else if (k < WOOZY_SHAKE_END) {
+                /* Shake it off: fast side-to-side that dies away. */
+                const float u = (k - WOOZY_BLINK_END) / (float)(WOOZY_SHAKE_END - WOOZY_BLINK_END);
+                rdx = 20.0f * (1.0f - u) * sinf((k - WOOZY_BLINK_END) / 22.0f);
+                rdy = 8.0f * (1.0f - u);
+                rframe = F_OPEN;
+            } else {
+                /* Settle: one normal blink back to the idle face. */
+                rframe = (k - WOOZY_SHAKE_END) < 120 ? F_B1 : F_OPEN;
+            }
             break;
         default:   /* STARTLE */
             rdy = -22.0f * expf(-k / 250.0f);

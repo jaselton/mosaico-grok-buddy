@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /*
- * On-device wake word ("Hi Grok") with a microWakeWord streaming model.
+ * On-device wake word ("Hey Grok") with a microWakeWord streaming model.
  * Features come from the TFLite Micro audio frontend configured exactly like
  * pymicro-features (the training feature generator): 30 ms windows every
  * 10 ms, 40 mel channels 125-7500 Hz, noise reduction, PCAN, log scale.
@@ -29,8 +29,8 @@
 
 static const char *TAG = "app_wake";
 
-extern const uint8_t model_start[] asm("_binary_hi_grok_tflite_start");
-extern const uint8_t model_end[] asm("_binary_hi_grok_tflite_end");
+extern const uint8_t model_start[] asm("_binary_wake_word_tflite_start");
+extern const uint8_t model_end[] asm("_binary_wake_word_tflite_end");
 
 namespace {
 

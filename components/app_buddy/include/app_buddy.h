@@ -29,6 +29,7 @@ typedef enum {
     APP_BUDDY_REACT_DIZZY,      /**< shaken: eyes spin */
     APP_BUDDY_REACT_HAPPY,      /**< petted: happy squint and bob */
     APP_BUDDY_REACT_STARTLE,    /**< bumped or woken: eyes jump */
+    APP_BUDDY_REACT_WOOZY,      /**< shaken for a while: spin, slow down, hard blinks, shake it off */
 } app_buddy_reaction_t;
 
 /** Value copy for diagnostics; no pointers into private controller state. */

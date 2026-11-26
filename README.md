@@ -1,7 +1,7 @@
 # Grok Desk Buddy for ESP-Mosaico
 
 Big expressive Grok Bot-style eyes on the [ESP-Mosaico](https://github.com/esp-mosaico/esp-mosaico-vibe)'s
-480×480 round screen, that you can **talk to**. Say "Hi Grok" (or tap), speak,
+480×480 round screen, that you can **talk to**. Say "Hey Grok" (or tap), speak,
 and Grok answers through the speaker while the eyes listen, think and talk. It
 reacts when you shake, bump, tilt or pet it, wakes you up with a shake-to-stop
 alarm, and can hand real tasks to **your own Grok Bot agent**.
@@ -15,13 +15,13 @@ alarm, and can hand real tasks to **your own Grok Bot agent**.
 
 - **Talk:** xAI realtime voice (`grok-voice-3.0`, pinned), server-side turn
   detection, tap while it talks to interrupt. Starts on a tap, or hands-free
-  with a **"Hi Grok" wake word** you train yourself ([`wakeword/`](wakeword/)).
+  with a **"Hey Grok" wake word** you train yourself ([`wakeword/`](wakeword/)).
 - **Eyes with moods:** idle glances and blinks, listening, thinking, speaking
   (bars follow your voice and Grok's), slow dots while your Grok Bot is busy.
 - **Reacts to handling:** shake → dizzy spin + buzz; bump → startle; tilt → eyes
   look downhill; face-down → sleeps with the mic off; pick up → wakes; long
   press (petting) → happy squint + purr.
-- **Alarms:** "Hi Grok, wake me at 6:30" sets an alarm on the board (kept across
+- **Alarms:** "Hey Grok, wake me at 6:30" sets an alarm on the board (kept across
   reboots). It rings with worried eyes, chimes and a buzz until you shake it,
   pick it up or tap, then Grok says good morning.
 - **Grok Bot hand-off:** "ask Bob to…" sends a task through the relay to a
@@ -89,7 +89,7 @@ Shared setting `xai_voice` picks a voice (default `eve`; also `ara`, `rex`,
 
 ### 4. Wake word (optional)
 
-Train "Hi Grok" and save it as `wakeword/hi_grok.tflite` — see
+Train "Hey Grok" and save it as `wakeword/wake_word.tflite` — see
 [`wakeword/README.md`](wakeword/README.md).
 
 ### 5. Build and install
@@ -135,7 +135,7 @@ Prebuilt bundles (generic, no relay or wake word) are attached to
 | --- | --- |
 | `components/app_buddy` | Eyes, moods, reactions, sleep, alarm face (portable to the GSP PC simulator) |
 | `components/app_voice` | Wi-Fi, realtime voice session, audio pipeline, tools, Grok Bot relay client |
-| `components/app_wake` | "Hi Grok" detection: TFLite Micro + the microWakeWord audio frontend |
+| `components/app_wake` | "Hey Grok" detection: TFLite Micro + the microWakeWord audio frontend |
 | `components/app_motion` | BMI270 gestures (shake, bump, tilt, face-down) and haptics |
 | `components/app_alarm` | NTP clock, alarms in NVS, ringing |
 | `components/app_config` | Reads Vibe Mode shared settings |

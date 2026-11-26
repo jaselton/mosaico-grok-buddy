@@ -14,7 +14,7 @@ extern "C" {
 /** Wake-word detection callback; runs on the wake task, must not block. */
 typedef void (*app_wake_cb_t)(void *ctx);
 
-/** Load the embedded microWakeWord model (wakeword/hi_grok.tflite) and start
+/** Load the embedded microWakeWord model (wakeword/wake_word.tflite) and start
  * detection. Returns ESP_ERR_NOT_FOUND when no model was built in. */
 esp_err_t app_wake_start(app_wake_cb_t cb, void *ctx);
 

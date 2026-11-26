@@ -104,7 +104,7 @@ typedef enum {
     EV_ERROR,
     EV_BUDGET,          /* relay: daily voice budget used up */
     EV_SLEEP,           /* laid face-down */
-    EV_WAKE_WORD,       /* "Hi Grok" heard */
+    EV_WAKE_WORD,       /* "Hey Grok" heard */
     EV_LOCAL_TOOL,      /* text = "name\nargs-json", call_id set */
     EV_ALARM_RING,      /* text = label */
     EV_ALARM_STOP,      /* text = label */
@@ -1123,6 +1123,6 @@ esp_err_t app_voice_start(const app_voice_config_t *config)
     app_buddy_set_tap_handler(s.buddy, on_tap, NULL);
     const bool wake = app_wake_start(on_wake_word, NULL) == ESP_OK;
     update_wake_enable();
-    ESP_LOGI(TAG, "Grok voice ready: tap to talk%s", wake ? " or say \"Hi Grok\"" : "");
+    ESP_LOGI(TAG, "Grok voice ready: tap to talk%s", wake ? " or say \"Hey Grok\"" : "");
     return ESP_OK;
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a microWakeWord "Hi Grok" model (adapted from microWakeWord's
+"""Train a microWakeWord "Hey Grok" model (adapted from microWakeWord's
 basic_training_notebook.ipynb). Each stage is skipped if its output exists,
 so the script can be re-run after an interruption.
 
@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 os.chdir(ROOT)
-PHRASES = ["hi grok", "hi grock", "hai grok"]   # spellings that steer the TTS pronunciation
+PHRASES = ["hey grok", "hey grock", "hay grok"]   # spellings that steer the TTS pronunciation
 SAMPLES_PER_PHRASE = 1200
 
 
@@ -150,7 +150,7 @@ feat = lambda d, w, truth, trunc: {"features_dir": d, "sampling_weight": w, "pen
                                    "truth": truth, "truncation_strategy": trunc, "type": "mmap"}
 config = {
     "window_step_ms": 10,
-    "train_dir": "trained_models/hi_grok",
+    "train_dir": "trained_models/wake_word",
     "features": [
         feat("generated_augmented_features", 2.0, True, "truncate_start"),
         feat("negative_datasets/speech", 10.0, False, "random"),
@@ -182,5 +182,5 @@ sh(f"{sys.executable} -m microwakeword.model_train_eval "
    "--mixconv_kernel_sizes '[5], [7,11], [9,15], [23]' --residual_connection '0,0,0,0' "
    "--first_conv_filters 32 --first_conv_kernel_size 5 --stride 3")
 
-model = Path("trained_models/hi_grok/tflite_stream_state_internal_quant/stream_state_internal_quant.tflite")
+model = Path("trained_models/wake_word/tflite_stream_state_internal_quant/stream_state_internal_quant.tflite")
 print("\nMODEL:", model, model.exists() and model.stat().st_size, flush=True)

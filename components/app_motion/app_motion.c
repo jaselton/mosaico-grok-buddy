@@ -33,6 +33,10 @@ static const char *TAG = "app_motion";
 #define FACE_UP_Z        -0.3f
 #define SLEEP_HOLD_MS    1200
 #define TILT_FULL_G      0.5f      /* this much gravity shift = full gaze offset */
+#define AGITATE_G        0.5f      /* jolt that counts as "still shaking" */
+#define AGITATE_GAP_MS   500       /* a calmer gap than this ends the shaking */
+#define WOOZY_AFTER_MS   5000      /* sustained shaking that makes it woozy */
+#define WOOZY_LOCK_MS    7000      /* no other reactions while woozy plays */
 #define PURR_STRENGTH    55        /* percent */
 #define BUZZ_STRENGTH    90
 
@@ -71,6 +75,8 @@ static void motion_task(void *arg)
     int calib = 0;
     float prev_mag = 1.0f;
     int64_t shake_ok_us = 0, bump_ok_us = 0, down_since_us = 0;
+    int64_t agitated_since_us = 0, last_agitate_us = 0;
+    bool woozy_fired = false;
     bool asleep = false;
     TickType_t wake = xTaskGetTickCount();
     for (;;) {
@@ -131,6 +137,22 @@ static void motion_task(void *arg)
 
         if (!asleep) {
             const float jolt = fabsf(mag - prev_mag);
+            /* Sustained shaking: jolts with no calm gap longer than AGITATE_GAP_MS. */
+            if (jolt >= AGITATE_G || fabsf(mag - 1.0f) >= SHAKE_G * 0.6f) {
+                if (!agitated_since_us || (now - last_agitate_us) / 1000 > AGITATE_GAP_MS) {
+                    agitated_since_us = now;
+                    woozy_fired = false;
+                }
+                last_agitate_us = now;
+            } else if (agitated_since_us && (now - last_agitate_us) / 1000 > AGITATE_GAP_MS) {
+                agitated_since_us = 0;
+            }
+            if (agitated_since_us && !woozy_fired && (now - agitated_since_us) / 1000 >= WOOZY_AFTER_MS) {
+                woozy_fired = true;
+                ESP_LOGI(TAG, "shaken for 5 s: woozy");
+                app_buddy_react(m.cfg.buddy, APP_BUDDY_REACT_WOOZY);
+                shake_ok_us = bump_ok_us = now + (int64_t)WOOZY_LOCK_MS * 1000;
+            }
             if ((jolt >= SHAKE_G || mag >= 1.0f + SHAKE_G) && now >= shake_ok_us) {
                 ESP_LOGI(TAG, "shake");
                 if (m.cfg.on_shake) {
