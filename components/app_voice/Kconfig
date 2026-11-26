@@ -1,0 +1,17 @@
+menu "Grok desk buddy"
+
+    config GROK_BUDDY_OWNER_NAME
+        string "Owner's name"
+        default "the user"
+        help
+            How the voice refers to the person at the desk, e.g. "Sam".
+            Put personal values in the git-ignored sdkconfig.local.defaults.
+
+    config GROK_BUDDY_BOT_NAME
+        string "Grok Bot name"
+        default "Bob"
+        help
+            Name of the personal Grok Bot that receives hand-off tasks
+            through the relay (see relay/README.md).
+
+endmenu

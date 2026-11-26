@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: Apache-2.0
+/*
+ * Grok Bot hand-off through the grok-buddy-relay Worker.
+ * One task owns all relay HTTP: it sends queued tasks (POST /task) and polls
+ * for answers (GET /results) - every few seconds while a task is outstanding,
+ * otherwise once a minute. Results are reported through the callback.
+ */
+#include <stdio.h>
+#include <string.h>
+
+#include "cJSON.h"
+#include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
+#include "esp_http_client.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+#include "voice_internal.h"
+
+static const char *TAG = "voice_bot";
+
+#define URL_MAX        160
+#define AUTH_MAX       96
+#define RESP_MAX       (16 * 1024)
+#define POLL_ACTIVE_MS 4000
+#define POLL_IDLE_MS   60000
+#define OUTSTANDING_MS (20 * 60 * 1000)   /* stop fast polling after 20 min */
+#define HTTP_TIMEOUT_MS 15000
+
+typedef struct {
+    char call_id[VOICE_CALL_ID_MAX];
+    char *task;
+} job_t;
+
+static struct {
+    char base[URL_MAX];
+    char auth[AUTH_MAX];
+    QueueHandle_t q;
+    voice_bot_cb_t cb;
+    void *ctx;
+    int64_t outstanding_until_us;
+    char *resp;
+    size_t resp_len;
+} b;
+
+static esp_err_t on_http(esp_http_client_event_t *e)
+{
+    if (e->event_id == HTTP_EVENT_ON_DATA && e->data_len > 0) {
+        const size_t room = RESP_MAX - 1 - b.resp_len;
+        const size_t n = (size_t)e->data_len < room ? (size_t)e->data_len : room;
+        memcpy(b.resp + b.resp_len, e->data, n);
+        b.resp_len += n;
+    }
+    return ESP_OK;
+}
+
+/* Perform one request; returns HTTP status (0 on transport failure). */
+static int request(esp_http_client_method_t method, const char *path, const char *body)
+{
+    char url[URL_MAX + 16];
+    snprintf(url, sizeof(url), "%s%s", b.base, path);
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .method = method,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .event_handler = on_http,
+        .disable_auto_redirect = true,
+    };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) {
+        return 0;
+    }
+    esp_http_client_set_header(c, "Authorization", b.auth);
+    if (body) {
+        esp_http_client_set_header(c, "Content-Type", "application/json");
+        esp_http_client_set_post_field(c, body, (int)strlen(body));
+    }
+    b.resp_len = 0;
+    const esp_err_t err = esp_http_client_perform(c);
+    const int status = err == ESP_OK ? esp_http_client_get_status_code(c) : 0;
+    esp_http_client_cleanup(c);
+    b.resp[b.resp_len] = '\0';
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "%s failed: %s", path, esp_err_to_name(err));
+    }
+    return status;
+}
+
+static void send_job(job_t *j)
+{
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "task", j->task);
+    char *body = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    const int status = body ? request(HTTP_METHOD_POST, "/task", body) : 0;
+    cJSON_free(body);
+    const bool ok = status >= 200 && status < 300;
+    ESP_LOGI(TAG, "task sent: HTTP %d %s", status, ok ? "" : b.resp);
+    if (ok) {
+        b.outstanding_until_us = esp_timer_get_time() + (int64_t)OUTSTANDING_MS * 1000;
+    }
+    b.cb(ok ? VOICE_BOT_SENT : VOICE_BOT_SEND_FAILED, j->call_id, NULL, b.ctx);
+}
+
+static void poll_results(void)
+{
+    const int status = request(HTTP_METHOD_GET, "/results", NULL);
+    if (status != 200) {
+        return;
+    }
+    cJSON *root = cJSON_Parse(b.resp);
+    const cJSON *arr = root ? cJSON_GetObjectItemCaseSensitive(root, "results") : NULL;
+    const cJSON *r;
+    cJSON_ArrayForEach(r, arr) {
+        const cJSON *text = cJSON_GetObjectItemCaseSensitive(r, "text");
+        const cJSON *st = cJSON_GetObjectItemCaseSensitive(r, "status");
+        const bool working = cJSON_IsString(st) && !strcmp(st->valuestring, "working");
+        if (working || !cJSON_IsString(text) || !text->valuestring[0]) {
+            continue;
+        }
+        ESP_LOGI(TAG, "bot answered (%u chars)", (unsigned)strlen(text->valuestring));
+        b.cb(VOICE_BOT_RESULT, "", text->valuestring, b.ctx);
+    }
+    cJSON_Delete(root);
+}
+
+static void bot_task(void *arg)
+{
+    (void)arg;
+    int64_t next_poll_us = esp_timer_get_time() + 10LL * 1000 * 1000;
+    for (;;) {
+        job_t j;
+        if (xQueueReceive(b.q, &j, pdMS_TO_TICKS(500)) == pdTRUE) {
+            if (voice_wifi_wait_connected(5000)) {
+                send_job(&j);
+            } else {
+                b.cb(VOICE_BOT_SEND_FAILED, j.call_id, NULL, b.ctx);
+            }
+            heap_caps_free(j.task);
+            next_poll_us = esp_timer_get_time() + (int64_t)POLL_ACTIVE_MS * 1000;
+            continue;
+        }
+        const int64_t now = esp_timer_get_time();
+        if (now >= next_poll_us) {
+            if (voice_wifi_wait_connected(0)) {
+                poll_results();
+            }
+            const bool active = now < b.outstanding_until_us;
+            next_poll_us = esp_timer_get_time() + (int64_t)(active ? POLL_ACTIVE_MS : POLL_IDLE_MS) * 1000;
+        }
+    }
+}
+
+esp_err_t voice_bot_start(const char *base_url, const char *token, voice_bot_cb_t cb, void *ctx)
+{
+    if (!base_url || !token || !cb || strlen(base_url) >= URL_MAX || strlen(token) + 8 >= AUTH_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    snprintf(b.base, sizeof(b.base), "%s", base_url);
+    size_t n = strlen(b.base);
+    while (n && b.base[n - 1] == '/') {
+        b.base[--n] = '\0';
+    }
+    snprintf(b.auth, sizeof(b.auth), "Bearer %s", token);
+    b.cb = cb;
+    b.ctx = ctx;
+    b.resp = heap_caps_malloc(RESP_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    b.q = xQueueCreate(4, sizeof(job_t));
+    if (!b.resp || !b.q) {
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTaskCreate(bot_task, "voice_bot", 6144, NULL, 4, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+    ESP_LOGI(TAG, "Grok Bot relay ready");
+    return ESP_OK;
+}
+
+bool voice_bot_send(const char *call_id, const char *task)
+{
+    if (!b.q || !task) {
+        return false;
+    }
+    job_t j = { 0 };
+    snprintf(j.call_id, sizeof(j.call_id), "%s", call_id ? call_id : "");
+    const size_t n = strlen(task) + 1;
+    j.task = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!j.task) {
+        return false;
+    }
+    memcpy(j.task, task, n);
+    if (xQueueSend(b.q, &j, 0) != pdTRUE) {
+        heap_caps_free(j.task);
+        return false;
+    }
+    return true;
+}

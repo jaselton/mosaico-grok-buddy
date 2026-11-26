@@ -1,0 +1,430 @@
+{
+  "screen": "buddy",
+  "w": 480,
+  "h": 480,
+  "screen_bg": "#000000",
+  "font": "fonts/DejaVuSans.ttf",
+  "default_font_size": 20,
+  "swipe": false,
+  "objects": [
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 0,
+      "y": 0,
+      "w": 480,
+      "h": 480,
+      "radius": 0,
+      "bg_color": "#000000",
+      "name": "tap",
+      "callback": "tap"
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "name": "eye_l",
+      "x": {
+        "default": 139,
+        "min": 91,
+        "max": 187
+      },
+      "y": {
+        "default": 118,
+        "min": 70,
+        "max": 166
+      },
+      "w": 160,
+      "h": 160
+    },
+    {
+      "type": "image",
+      "parent": 1,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_open.png",
+      "name": "eye_l_open",
+      "bind": "eye_l_open",
+      "bind_target": "visible",
+      "hidden": false
+    },
+    {
+      "type": "image",
+      "parent": 1,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_think.png",
+      "name": "eye_l_think",
+      "bind": "eye_l_think",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "image",
+      "parent": 1,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_b1.png",
+      "name": "eye_l_b1",
+      "bind": "eye_l_b1",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "image",
+      "parent": 1,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_b2.png",
+      "name": "eye_l_b2",
+      "bind": "eye_l_b2",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "image",
+      "parent": 1,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_b3.png",
+      "name": "eye_l_b3",
+      "bind": "eye_l_b3",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "name": "eye_r",
+      "x": {
+        "default": 267,
+        "min": 219,
+        "max": 315
+      },
+      "y": {
+        "default": 58,
+        "min": 10,
+        "max": 106
+      },
+      "w": 160,
+      "h": 160
+    },
+    {
+      "type": "image",
+      "parent": 7,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_open.png",
+      "name": "eye_r_open",
+      "bind": "eye_r_open",
+      "bind_target": "visible",
+      "hidden": false
+    },
+    {
+      "type": "image",
+      "parent": 7,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_think.png",
+      "name": "eye_r_think",
+      "bind": "eye_r_think",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "image",
+      "parent": 7,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_b1.png",
+      "name": "eye_r_b1",
+      "bind": "eye_r_b1",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "image",
+      "parent": 7,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_b2.png",
+      "name": "eye_r_b2",
+      "bind": "eye_r_b2",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "image",
+      "parent": 7,
+      "x": 0,
+      "y": 0,
+      "w": 160,
+      "h": 160,
+      "image": "assets/eye_b3.png",
+      "name": "eye_r_b3",
+      "bind": "eye_r_b3",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 0,
+      "y": 300,
+      "w": 480,
+      "h": 140,
+      "name": "wave",
+      "bind": "wave",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_0",
+      "x": 103,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_1",
+      "x": 135,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_2",
+      "x": 167,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_3",
+      "x": 199,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_4",
+      "x": 231,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_5",
+      "x": 263,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_6",
+      "x": 295,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_7",
+      "x": 327,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "rect",
+      "parent": 13,
+      "name": "bar_8",
+      "x": 359,
+      "y": {
+        "default": 61,
+        "min": 0,
+        "max": 122
+      },
+      "w": 18,
+      "h": {
+        "default": 18,
+        "min": 18,
+        "max": 140
+      },
+      "bg_color": "#39FF14",
+      "radius": 9
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 0,
+      "y": 330,
+      "w": 480,
+      "h": 60,
+      "name": "dots",
+      "bind": "dots",
+      "bind_target": "visible",
+      "hidden": true
+    },
+    {
+      "type": "rect",
+      "parent": 23,
+      "name": "dot_0",
+      "x": 179,
+      "y": 19,
+      "w": 22,
+      "h": 22,
+      "bg_color": "#39FF14",
+      "radius": 11,
+      "opacity": {
+        "default": 255,
+        "min": 0,
+        "max": 255
+      }
+    },
+    {
+      "type": "rect",
+      "parent": 23,
+      "name": "dot_1",
+      "x": 229,
+      "y": 19,
+      "w": 22,
+      "h": 22,
+      "bg_color": "#39FF14",
+      "radius": 11,
+      "opacity": {
+        "default": 255,
+        "min": 0,
+        "max": 255
+      }
+    },
+    {
+      "type": "rect",
+      "parent": 23,
+      "name": "dot_2",
+      "x": 279,
+      "y": 19,
+      "w": 22,
+      "h": 22,
+      "bg_color": "#39FF14",
+      "radius": 11,
+      "opacity": {
+        "default": 255,
+        "min": 0,
+        "max": 255
+      }
+    }
+  ]
+}

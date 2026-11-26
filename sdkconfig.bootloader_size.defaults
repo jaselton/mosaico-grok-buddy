@@ -1,0 +1,7 @@
+# Local-build workaround, applied after the Recovery contract defaults.
+# The retained Vibe Mode bootloader at 0x2000 is what actually runs: system-update
+# keeps the bootloader and never writes this one. With the pinned ESP-IDF
+# toolchain (GCC 16.1) the locally built bootloader is 0x6120 bytes, over the
+# fixed 24 KiB window, so IDF's size check fails. Silencing bootloader logs
+# lets the full build finish. Remove this file once upstream fits again.
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
