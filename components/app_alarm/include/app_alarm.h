@@ -36,6 +36,9 @@ esp_err_t app_alarm_set_in(int seconds, const char *label, char *out, size_t len
 /** Daily "watch" alarm (the clock face's alarm hand): hour 0-23, minute 0-59.
  * Persisted; when on it rings every day at that local time. */
 esp_err_t app_alarm_set_watch(int hour, int minute, bool on);
+/** Same, from voice: once = switch off after ringing; label is spoken when it rings. */
+esp_err_t app_alarm_set_watch_ex(int hour, int minute, bool on, bool once, const char *label);
+/** Cancel also switches the watch alarm off (counted if it was on). */
 /** Read the watch alarm; returns false if it has never been set. */
 bool app_alarm_get_watch(int *hour, int *minute, bool *on);
 

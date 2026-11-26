@@ -42,7 +42,9 @@ typedef struct {
 typedef struct {
     int8_t hour, minute;   /* -1 = never set */
     uint8_t on;
+    uint8_t once;          /* switch itself off after ringing (voice one-time alarms) */
     int64_t last_rang_day; /* local day number it last rang, to ring once per day */
+    char label[APP_ALARM_LABEL_MAX];
 } watch_t;
 
 static struct {
@@ -187,6 +189,11 @@ static esp_err_t store(time_t when, const char *label)
 
 esp_err_t app_alarm_set_watch(int hour, int minute, bool on)
 {
+    return app_alarm_set_watch_ex(hour, minute, on, false, NULL);
+}
+
+esp_err_t app_alarm_set_watch_ex(int hour, int minute, bool on, bool once, const char *label)
+{
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -195,12 +202,14 @@ esp_err_t app_alarm_set_watch(int hour, int minute, bool on)
     a.watch.hour = (int8_t)hour;
     a.watch.minute = (int8_t)minute;
     a.watch.on = on;
-    if (moved) {
+    a.watch.once = once;
+    snprintf(a.watch.label, sizeof(a.watch.label), "%s", label ? label : "");
+    if (moved || on) {
         a.watch.last_rang_day = 0;   /* a new time may ring today */
     }
     atomic_store(&a.dirty, true);
     xSemaphoreGive(a.lock);
-    ESP_LOGI(TAG, "watch alarm %02d:%02d %s", hour, minute, on ? "ON" : "off");
+    ESP_LOGI(TAG, "watch alarm %02d:%02d %s%s", hour, minute, on ? "ON" : "off", once ? " (once)" : "");
     return ESP_OK;
 }
 
@@ -229,6 +238,10 @@ int app_alarm_cancel_all(void)
         n += a.alarms[i].when != 0;
     }
     memset(a.alarms, 0, sizeof(a.alarms));
+    if (a.watch.on) {
+        a.watch.on = 0;   /* the hand stays where it is, switched off */
+        n++;
+    }
     atomic_store(&a.dirty, true);
     xSemaphoreGive(a.lock);
     return n;
@@ -310,7 +323,10 @@ static void alarm_task(void *arg)
             const int64_t day = (int64_t)(lt.tm_year * 400 + lt.tm_yday);
             if (lt.tm_hour == a.watch.hour && lt.tm_min == a.watch.minute && a.watch.last_rang_day != day) {
                 a.watch.last_rang_day = day;
-                snprintf(a.ring_label, sizeof(a.ring_label), "%s", "wake-up alarm");
+                snprintf(a.ring_label, sizeof(a.ring_label), "%s", a.watch.label[0] ? a.watch.label : "wake-up alarm");
+                if (a.watch.once) {
+                    a.watch.on = 0;
+                }
                 due = APP_ALARM_MAX;   /* any non-negative value: ring */
                 changed = true;
             }

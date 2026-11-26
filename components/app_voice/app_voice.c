@@ -81,8 +81,10 @@ static const char *TAG = "app_voice";
 #define ALARM_INSTRUCTIONS                                                          \
     " You can set alarms and timers on this device with set_alarm: pass `time` "     \
     "(local 24-hour HH:MM) for a clock time, or `in_seconds` for anything relative " \
-    "(\"in 10 minutes\" = 600). Add a short label if one was given. cancel_alarms "  \
-    "clears them. Confirm briefly using the time the tool returns."
+    "(\"in 10 minutes\" = 600). A clock-time alarm moves the blue alarm hand on "    \
+    "the watch face; set `daily` true only if they ask for it every day. Add a "     \
+    "short label if one was given. cancel_alarms clears them and switches the hand " \
+    "off. Confirm briefly using the time the tool returns."
 
 #define GREETING_PREFIX                                                             \
     "[" OWNER "'s alarm just rang and they switched it off. Greet them warmly; if it " \
@@ -649,6 +651,9 @@ static void send_session_update(void)
         cJSON *in_p = cJSON_AddObjectToObject(props, "in_seconds");
         cJSON_AddStringToObject(in_p, "type", "integer");
         cJSON_AddStringToObject(in_p, "description", "Ring this many seconds from now (relative alarms/timers)");
+        cJSON *daily = cJSON_AddObjectToObject(props, "daily");
+        cJSON_AddStringToObject(daily, "type", "boolean");
+        cJSON_AddStringToObject(daily, "description", "With `time`: repeat every day (default false = ring once)");
         cJSON *label = cJSON_AddObjectToObject(props, "label");
         cJSON_AddStringToObject(label, "type", "string");
         cJSON_AddStringToObject(label, "description", "Optional short label, e.g. gym");
@@ -832,8 +837,26 @@ static void on_event(const msg_t *m)
                 char when[48] = "";
                 const bool rel = cJSON_IsNumber(in);
                 if (rel || (cJSON_IsString(tm) && sscanf(tm->valuestring, "%d:%d", &hh, &mm) == 2)) {
-                    const esp_err_t e = rel ? app_alarm_set_in((int)in->valuedouble, label, when, sizeof(when))
-                                            : app_alarm_set(hh, mm, label, when, sizeof(when));
+                    const cJSON *dy = a ? cJSON_GetObjectItemCaseSensitive(a, "daily") : NULL;
+                    esp_err_t e;
+                    if (rel) {
+                        e = app_alarm_set_in((int)in->valuedouble, label, when, sizeof(when));
+                    } else {
+                        /* Clock times go on the watch face's blue alarm hand. */
+                        const bool every_day = cJSON_IsTrue(dy);
+                        e = app_alarm_set_watch_ex(hh, mm, true, !every_day, label);
+                        if (e == ESP_OK) {
+                            bool tomorrow = false;
+                            if (app_alarm_time_valid()) {
+                                time_t nt = time(NULL);
+                                struct tm lt;
+                                localtime_r(&nt, &lt);
+                                tomorrow = hh * 60 + mm < lt.tm_hour * 60 + lt.tm_min;
+                            }
+                            snprintf(when, sizeof(when), "%s %02d:%02d%s", every_day ? "every day at" :
+                                     (tomorrow ? "tomorrow" : "today"), hh, mm, every_day ? "" : " (once)");
+                        }
+                    }
                     if (e == ESP_OK) {
                         snprintf(out, sizeof(out), "{\"status\":\"set\",\"rings\":\"%s\"}", when);
                     } else {
