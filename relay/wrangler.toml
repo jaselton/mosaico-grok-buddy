@@ -6,7 +6,9 @@ preview_urls = false
 
 [vars]
 XAI_MODEL = "grok-voice-3.0"   # pinned; grok-voice-latest is an alias that can move
-DAILY_MINUTES = "20"           # xAI voice minutes per day (~$0.08/min => max ~$1.60/day)
+DAILY_MINUTES = "60"           # xAI voice minutes per day
+DAILY_USD = "10"               # and at most this many dollars per day; the lower limit wins
+USD_PER_MINUTE = "0.08"        # grok-voice-3.0 list price; update if xAI changes it
 MAX_SESSION_SECONDS = "300"    # hard cap on one voice session
 TIMEZONE = "America/Chicago"   # when the daily budget resets
 

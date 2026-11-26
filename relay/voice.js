@@ -11,6 +11,14 @@
 
 const BUDGET_CLOSE_CODE = 4002;
 
+// Daily voice budget: the lower of DAILY_MINUTES and DAILY_USD at USD_PER_MINUTE.
+export function dailyLimitSeconds(env) {
+  const byMinutes = Number(env.DAILY_MINUTES || "20") * 60;
+  const rate = Number(env.USD_PER_MINUTE || "0.08");
+  const byDollars = env.DAILY_USD && rate > 0 ? (Number(env.DAILY_USD) / rate) * 60 : Infinity;
+  return Math.floor(Math.min(byMinutes, byDollars));
+}
+
 function safeSend(ws, data) {
   try { ws.send(data); } catch { /* peer already gone */ }
 }
@@ -25,7 +33,7 @@ export async function handleVoice(req, env, ctx, stub) {
   }
   if (!env.XAI_API_KEY) return new Response("voice not configured", { status: 503 });
 
-  const limitSec = Number(env.DAILY_MINUTES || "20") * 60;
+  const limitSec = dailyLimitSeconds(env);
   const maxSessionSec = Number(env.MAX_SESSION_SECONDS || "300");
   const pair = new WebSocketPair();
   const [client, dev] = [pair[0], pair[1]];

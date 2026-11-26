@@ -12,9 +12,12 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "esp_heap_caps.h"
+#include "esp_iris.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
@@ -40,7 +43,12 @@ constexpr float kFeatureScale = 0.0390625f;     /* pymicro-features FLOAT32_SCAL
 constexpr size_t kArenaBytes = 96 * 1024;
 constexpr size_t kVarArenaBytes = 2 * 1024;
 constexpr int kWindow = 5;                      /* scores averaged */
-constexpr float kCutoff = 0.90f;                /* tuned against the test results */
+constexpr float kDefaultCutoff = 0.90f;         /* adjustable over USB, see rpc_* below */
+constexpr float kNearMissFloor = 0.40f;         /* peaks above this are logged */
+/* USB tuning service (mosaico.py iris rpc 18263 <method> --payload ...):
+ *   1 set cutoff ("0.85")   2 test mode ("1"/"0": log only, no conversation)
+ *   3 stats                  4 reset stats */
+constexpr uint16_t kRpcService = 0x4757;   /* 'GW' */
 constexpr int kRefractoryMs = 2000;
 constexpr size_t kRingBytes = kSampleRate * 2;  /* 1 s of PCM16 */
 
@@ -50,6 +58,11 @@ struct Wake {
     StreamBufferHandle_t ring = nullptr;
     std::atomic<bool> enabled{true};
     std::atomic<bool> resumed{false};   /* re-settle scores after a pause */
+    std::atomic<float> cutoff{kDefaultCutoff};
+    std::atomic<bool> test_mode{false};
+    std::atomic<int> detections{0};
+    std::atomic<int> near_misses{0};
+    std::atomic<float> best_miss{0};
     FrontendState frontend{};
     tflite::MicroInterpreter *interp = nullptr;
     int stride = 3;
@@ -152,6 +165,7 @@ void wake_task(void *)
     int16_t pcm[160];
     float scores[kWindow] = {0};
     int score_pos = 0, frames = 0, ignore_scores = kWindow * 4;
+    float peak = 0;
     TickType_t refractory_until = 0;
     TfLiteTensor *in = w.interp->input(0);
     for (;;) {
@@ -191,16 +205,70 @@ void wake_task(void *)
                 mean += s;
             }
             mean /= kWindow;
-            if (mean >= kCutoff && xTaskGetTickCount() >= refractory_until && w.enabled.load()) {
-                ESP_LOGI(TAG, "wake word (score %.2f)", mean);
+            const float cutoff = w.cutoff.load();
+            if (mean >= cutoff && xTaskGetTickCount() >= refractory_until && w.enabled.load()) {
+                w.detections++;
+                ESP_LOGI(TAG, "wake word (score %.2f, cutoff %.2f)%s", mean, cutoff,
+                         w.test_mode.load() ? " [test]" : "");
                 refractory_until = xTaskGetTickCount() + pdMS_TO_TICKS(kRefractoryMs);
                 memset(scores, 0, sizeof(scores));
-                if (w.cb) {
+                peak = 0;
+                if (w.cb && !w.test_mode.load()) {
                     w.cb(w.ctx);
                 }
+            } else if (xTaskGetTickCount() < refractory_until) {
+                peak = 0;   /* the tail of a detection, not a separate near miss */
+            } else if (mean > peak) {
+                peak = mean;
+            } else if (peak >= kNearMissFloor && mean < peak * 0.5f) {
+                /* A peak that rose and fell without reaching the cutoff. */
+                w.near_misses++;
+                if (peak > w.best_miss.load()) {
+                    w.best_miss.store(peak);
+                }
+                ESP_LOGI(TAG, "near miss (peak %.2f, cutoff %.2f)", peak, cutoff);
+                peak = 0;
+            } else if (mean < 0.05f) {
+                peak = 0;
             }
         }
     }
+}
+
+esp_err_t rpc(const esp_iris_rpc_request_t *req, uint8_t *resp, size_t cap, size_t *out, void *)
+{
+    char arg[16] = {0};
+    if (req->payload && req->payload_size) {
+        memcpy(arg, req->payload, req->payload_size < sizeof(arg) - 1 ? req->payload_size : sizeof(arg) - 1);
+    }
+    switch (req->method_id) {
+    case 1: {
+        const float v = strtof(arg, nullptr);
+        if (v >= 0.3f && v <= 0.99f) {
+            w.cutoff.store(v);
+            ESP_LOGI(TAG, "cutoff set to %.2f", v);
+        }
+        break;
+    }
+    case 2:
+        w.test_mode.store(arg[0] == '1');
+        ESP_LOGI(TAG, "test mode %s", w.test_mode.load() ? "on (log only)" : "off");
+        break;
+    case 4:
+        w.detections.store(0);
+        w.near_misses.store(0);
+        w.best_miss.store(0);
+        break;
+    default:
+        break;
+    }
+    *out = (size_t)snprintf((char *)resp, cap, "cutoff=%.2f test=%d detections=%d near_misses=%d best_miss=%.2f",
+                            w.cutoff.load(), w.test_mode.load() ? 1 : 0, w.detections.load(),
+                            w.near_misses.load(), w.best_miss.load());
+    if (*out > cap) {
+        *out = cap;
+    }
+    return ESP_OK;
 }
 
 }  // namespace
@@ -225,7 +293,10 @@ extern "C" esp_err_t app_wake_start(app_wake_cb_t cb, void *ctx)
     if (xTaskCreateWithCaps(wake_task, "wake", 6144, nullptr, 4, nullptr, MALLOC_CAP_SPIRAM) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "listening for the wake word");
+    for (uint16_t m = 1; m <= 4; ++m) {
+        esp_iris_rpc_register(kRpcService, m, rpc, nullptr);
+    }
+    ESP_LOGI(TAG, "listening for the wake word (cutoff %.2f)", w.cutoff.load());
     return ESP_OK;
 }
 

@@ -13,7 +13,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 os.chdir(ROOT)
-PHRASES = ["hey grok", "hey grock", "hay grok"]   # spellings that steer the TTS pronunciation
+PHRASES = ["hey grok", "hey grock", "hay grok", "hey, grok"]   # spellings/pauses that steer the TTS
+SAMPLES_PER_NEGATIVE = 150
+# Hard negatives: sound-alikes the first model fired on ("hey" + a hard G/K
+# word). Trained as "not the wake word" so the model keys on "Grok" itself.
+NEGATIVE_PHRASES = [
+    "hey greg", "hey rock", "hey brock", "hey jock", "hey doc", "hey bob", "great job",
+    "hey google", "hey group", "hey grow", "hey glock", "hey clock", "hey crook",
+    "hey gross", "hey grape", "hey frog", "hey grandma", "hey good", "hey guys",
+    "hey kid", "okay google", "hey siri", "hey there", "hey look", "hey grab",
+    "hey grid", "great", "grow up", "a rock", "hey dog", "hey god", "hey hulk",
+    "hey cook", "hey grub", "hey craig", "hey greta", "hey brooke", "hey rob",
+    "hey grace", "hey greek",
+]
 SAMPLES_PER_PHRASE = 1200
 
 
@@ -38,6 +50,19 @@ if not Path("generated_samples").exists():
         for j, wav in enumerate(sorted(Path(out).glob("*.wav"))):
             wav.rename(Path("generated_samples") / f"p{i}_{j}.wav")
 print("samples:", len(list(Path("generated_samples").glob("*.wav"))), flush=True)
+
+stage("generate hard negatives")
+if not Path("generated_negatives").exists():
+    Path("generated_negatives").mkdir()
+    for i, phrase in enumerate(NEGATIVE_PHRASES):
+        out = f"neg_{i}"
+        if not Path(out).exists():
+            sh(f'{sys.executable} piper-sample-generator/generate_samples.py "{phrase}" '
+               f'--max-samples {SAMPLES_PER_NEGATIVE} --batch-size 75 --output-dir {out}')
+        for j, wav in enumerate(sorted(Path(out).glob("*.wav"))):
+            wav.rename(Path("generated_negatives") / f"n{i}_{j}.wav")
+        Path(out).rmdir()
+print("hard negatives:", len(list(Path("generated_negatives").glob("*.wav"))), flush=True)
 
 # ---- 2. augmentation audio --------------------------------------------------
 stage("augmentation data")
@@ -107,8 +132,8 @@ from microwakeword.audio.clips import Clips  # noqa: E402
 from microwakeword.audio.spectrograms import SpectrogramGeneration  # noqa: E402
 from mmap_ninja.ragged import RaggedMmap  # noqa: E402
 
-if not Path("generated_augmented_features/.done").exists():
-    clips = Clips(input_directory="generated_samples", file_pattern="*.wav",
+def make_features(sample_dir, out_root):
+    clips = Clips(input_directory=sample_dir, file_pattern="*.wav",
                   max_clip_duration_s=None, remove_silence=False,
                   random_split_seed=10, split_count=0.1)
     augmenter = Augmentation(
@@ -124,13 +149,19 @@ if not Path("generated_augmented_features/.done").exists():
     for split, name, rep, slide in (("training", "train", 2, 10),
                                     ("validation", "validation", 1, 10),
                                     ("testing", "test", 1, 1)):
-        out = Path("generated_augmented_features") / split
+        out = Path(out_root) / split
         out.mkdir(parents=True, exist_ok=True)
         spec = SpectrogramGeneration(clips=clips, augmenter=augmenter, slide_frames=slide, step_ms=10)
         RaggedMmap.from_generator(out_dir=str(out / "wakeword_mmap"),
                                   sample_generator=spec.spectrogram_generator(split=name, repeat=rep),
                                   batch_size=100, verbose=True)
-    Path("generated_augmented_features/.done").touch()
+    Path(out_root, ".done").touch()
+
+
+if not Path("generated_augmented_features/.done").exists():
+    make_features("generated_samples", "generated_augmented_features")
+if not Path("generated_negative_features/.done").exists():
+    make_features("generated_negatives", "generated_negative_features")
 
 # ---- 4. negative features ---------------------------------------------------
 stage("negative datasets")
@@ -153,12 +184,13 @@ config = {
     "train_dir": "trained_models/wake_word",
     "features": [
         feat("generated_augmented_features", 2.0, True, "truncate_start"),
+        feat("generated_negative_features", 6.0, False, "truncate_start"),
         feat("negative_datasets/speech", 10.0, False, "random"),
         feat("negative_datasets/dinner_party", 10.0, False, "random"),
         feat("negative_datasets/no_speech", 5.0, False, "random"),
         feat("negative_datasets/dinner_party_eval", 0.0, False, "split"),
     ],
-    "training_steps": [20000],
+    "training_steps": [30000],
     "positive_class_weight": [1],
     "negative_class_weight": [20],
     "learning_rates": [0.001],

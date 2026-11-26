@@ -13,7 +13,7 @@
 // State lives in one SQLite-backed Durable Object so reads see writes immediately.
 
 import { DurableObject } from "cloudflare:workers";
-import { handleVoice } from "./voice.js";
+import { dailyLimitSeconds, handleVoice } from "./voice.js";
 
 const MAX_TASK_CHARS = 2000;
 const MAX_RESULT_CHARS = 2000;
@@ -68,7 +68,12 @@ export default {
 
     if (url.pathname === "/usage" && req.method === "GET") {
       if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
-      return json({ ok: true, daily_limit_minutes: Number(env.DAILY_MINUTES || "20"), ...(await stub.usage()) });
+      const limitMin = dailyLimitSeconds(env) / 60;
+      const rate = Number(env.USD_PER_MINUTE || "0.08");
+      const u = await stub.usage();
+      const usd = Object.fromEntries(Object.entries(u.minutes_used).map(([d, m]) => [d, +(m * rate).toFixed(2)]));
+      return json({ ok: true, daily_limit_minutes: +limitMin.toFixed(1),
+                    daily_limit_usd: +(limitMin * rate).toFixed(2), ...u, est_usd: usd });
     }
 
     if (url.pathname === "/task" && req.method === "POST") {

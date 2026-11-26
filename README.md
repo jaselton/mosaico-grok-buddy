@@ -37,8 +37,10 @@ xAI bills voice per minute (about $0.05–0.08/min at the time of writing; see
 
 - **Recommended: voice through the relay.** The [`relay/`](relay/) Cloudflare
   Worker holds your xAI key as a secret (nothing extractable on the board),
-  pins the model and enforces a **daily voice budget** (default 20 min ≈
-  $1.60/day, `GET /usage` shows minutes used). The Worker fits the free tier.
+  pins the model and enforces a **daily voice budget**: the lower of
+  `DAILY_MINUTES` (default 60) and `DAILY_USD` (default $10) at `USD_PER_MINUTE`;
+  `GET /usage` shows minutes and estimated dollars per day. The Worker fits the
+  free tier.
 - **Fallback: direct.** Without a relay the board connects to xAI itself using a
   key from Vibe Mode or `secrets/xai_api_key`; anyone holding the board could
   extract it.
@@ -68,7 +70,8 @@ wrangler secret put XAI_API_KEY      # paste the key at the hidden prompt
 
 `setup_tokens.sh` creates the device and bot tokens and writes the board's copy
 to the git-ignored `secrets/relay_url` and `secrets/relay_token`. Adjust
-`DAILY_MINUTES` and `TIMEZONE` in `relay/wrangler.toml`.
+`DAILY_MINUTES`, `DAILY_USD`, `USD_PER_MINUTE` and `TIMEZONE` in
+`relay/wrangler.toml`.
 
 *Direct mode instead:* add a shared setting `xai_api_key` in **Vibe Mode →
 Settings → Shared information**, or run `zsh tools/set_xai_key.sh`.

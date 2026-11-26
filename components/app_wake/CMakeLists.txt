@@ -11,7 +11,7 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "frontend" "frontend/kissfft"
     REQUIRES esp_common
-    PRIV_REQUIRES log espressif__esp-tflite-micro)
+    PRIV_REQUIRES log esp_iris espressif__esp-tflite-micro)
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error -Wno-unused-variable -Wno-sign-compare)
 
 # Optional model: projects/grok_desk_buddy/wakeword/wake_word.tflite (git-ignored;

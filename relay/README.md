@@ -15,8 +15,8 @@ Grok Bot's webhook routine. Setup steps are in the
 
 **Voice proxy** (`voice.js`): messages pass through unchanged, so the device
 speaks xAI's protocol; the relay adds the key and pins `XAI_MODEL`. Session
-time is summed per local day (`TIMEZONE`) in the Durable Object; once
-`DAILY_MINUTES` is spent, new sessions get
+time is summed per local day (`TIMEZONE`) in the Durable Object; once the
+daily limit (the lower of `DAILY_MINUTES` and `DAILY_USD` / `USD_PER_MINUTE`) is spent, new sessions get
 `{"type":"error","error":{"code":"daily_budget_exhausted"}}` and close code
 4002, and a session is cut at the remaining budget or `MAX_SESSION_SECONDS`.
 

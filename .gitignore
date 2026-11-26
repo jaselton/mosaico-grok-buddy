@@ -70,3 +70,4 @@ wakeword/negative_datasets/
 wakeword/trained_models/
 wakeword/training_parameters.yaml
 wakeword/*.log
+wakeword/neg_*/
