@@ -53,9 +53,15 @@ jobs:
           git submodule update -q --init --recursive --depth 1
           ./install.sh "$IDF_TARGET"
 
+      - name: ESP-Iris host Python (bundle builder)
+        run: |
+          python3 -m venv ~/iris-venv
+          ~/iris-venv/bin/pip install -q -r ws/submodule/esp-mosaico-utils/ESP-Iris/components/esp_iris/tools/requirements.lock
+
       - name: Build firmware and system-update bundle
         run: |
           . ~/esp-idf/export.sh > /dev/null
+          export ESP_IRIS_PYTHON=~/iris-venv/bin/python
           cd ws/projects/grok_desk_buddy
           idf.py -B build build
           idf.py -B build system-update-bundle
