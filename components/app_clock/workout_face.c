@@ -155,7 +155,11 @@ static void draw_cb(const esp_gsp_canvas_surface_t *s, void *ctx)
         for (int x = x0; x < x0 + w; ++x) {
             const float dx = x + 0.5f - CX;
             if (fabsf(dx) < hole) {
-                x = (int)(CX + hole) - 1;
+                /* first column whose centre is outside the hole; always ahead of x */
+                const int nx = (int)ceilf(CX + hole - 0.5f);
+                if (nx > x) {
+                    x = nx - 1;
+                }
                 continue;
             }
             const float r = sqrtf(dx * dx + dy * dy);
