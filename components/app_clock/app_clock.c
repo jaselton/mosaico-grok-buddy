@@ -660,6 +660,7 @@ void app_clock_scene_changed(uint16_t scene_id)
     c.current_scene = scene_id;
     timer_face_scene_changed(scene_id);
     usage_face_scene_changed(scene_id);
+    weather_face_scene_changed(scene_id);
     workout_face_scene_changed(scene_id);
     if (scene_id == c.scene && c.ui && c.bg) {
         /* Binds are scene-scoped and the scene is rebuilt on arrival, so the
@@ -689,6 +690,23 @@ esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids)
                                     ids->usage_msub, ids->usage_week, ids->usage_voice, ids->usage_upd };
     if (usage_face_start(ui, &uids) != ESP_OK) {
         ESP_LOGE(TAG, "usage screen unavailable");
+    }
+    weather_face_ids_t xids = { .scene = ids->weather_scene, .canvas = ids->weather_canvas,
+                                .temp = ids->weather_temp, .cond = ids->weather_cond,
+                                .upd = ids->weather_upd,
+                                .pollen = ids->weather_pollen };
+    memcpy(xids.hour, ids->weather_hour, sizeof(xids.hour));
+    memcpy(xids.htemp, ids->weather_htemp, sizeof(xids.htemp));
+    xids.fscene = ids->forecast_scene;
+    xids.fcanvas = ids->forecast_canvas;
+    xids.ftitle = ids->forecast_title;
+    xids.fupd = ids->forecast_upd;
+    memcpy(xids.fday, ids->forecast_day, sizeof(xids.fday));
+    memcpy(xids.fpop, ids->forecast_pop, sizeof(xids.fpop));
+    memcpy(xids.flo, ids->forecast_lo, sizeof(xids.flo));
+    memcpy(xids.fhi, ids->forecast_hi, sizeof(xids.fhi));
+    if (weather_face_start(ui, &xids) != ESP_OK) {
+        ESP_LOGW(TAG, "weather screen unavailable");
     }
     const workout_face_ids_t wids = { ids->workout_scene, ids->workout_canvas, ids->workout_title,
                                       ids->workout_phase, ids->workout_digits, ids->workout_round,

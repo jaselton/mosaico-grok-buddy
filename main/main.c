@@ -199,7 +199,7 @@ void app_main(void)
     app_buddy_screen_ids_t ids;
     app_buddy_screen_ids(&ids);
     s_ids = ids;
-    const app_clock_ids_t clock_ids = {
+    app_clock_ids_t clock_ids = {
         .clock_scene = ids.clock_scene, .clock_canvas = ids.clock_canvas,
         .timer_scene = ids.timer_scene, .timer_canvas = ids.timer_canvas,
         .timer_digits = ids.timer_digits, .timer_sub = ids.timer_sub, .timer_reset = ids.timer_reset,
@@ -209,7 +209,20 @@ void app_main(void)
         .workout_scene = ids.workout_scene, .workout_canvas = ids.workout_canvas,
         .workout_title = ids.workout_title, .workout_phase = ids.workout_phase,
         .workout_digits = ids.workout_digits, .workout_round = ids.workout_round, .workout_btn = ids.workout_btn,
+        .weather_scene = ids.weather_scene, .weather_canvas = ids.weather_canvas, .weather_temp = ids.weather_temp,
+        .weather_cond = ids.weather_cond, .weather_upd = ids.weather_upd,
+        .weather_pollen = ids.weather_pollen,
     };
+    memcpy(clock_ids.weather_hour, ids.weather_hour, sizeof(ids.weather_hour));
+    memcpy(clock_ids.weather_htemp, ids.weather_htemp, sizeof(ids.weather_htemp));
+    clock_ids.forecast_scene = ids.forecast_scene;
+    clock_ids.forecast_canvas = ids.forecast_canvas;
+    clock_ids.forecast_title = ids.forecast_title;
+    clock_ids.forecast_upd = ids.forecast_upd;
+    memcpy(clock_ids.forecast_day, ids.forecast_day, sizeof(ids.forecast_day));
+    memcpy(clock_ids.forecast_pop, ids.forecast_pop, sizeof(ids.forecast_pop));
+    memcpy(clock_ids.forecast_lo, ids.forecast_lo, sizeof(ids.forecast_lo));
+    memcpy(clock_ids.forecast_hi, ids.forecast_hi, sizeof(ids.forecast_hi));
     if (app_clock_start(application.ui, &clock_ids) == ESP_OK) {
         app_buddy_set_scene_handler(application.controller, on_scene, NULL);
         app_clock_set_usage_note_handler(on_usage_note);

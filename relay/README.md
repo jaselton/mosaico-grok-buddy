@@ -27,6 +27,8 @@ results; the device token can only use voice, send tasks and read results.
 Secrets (`wrangler secret put`): `DEVICE_TOKEN`, `BOT_TOKEN` (via
 `setup_tokens.sh`), `XAI_API_KEY`, `GROKBOT_WEBHOOK_URL`, `GROKBOT_WEBHOOK_KEY`
 (via `set_webhook.sh`).
+Optional secret `HOME_LOCATION` = `lat,lon,City,ZIP` pins the weather, pollen
+and voice location when IP geolocation lands on the wrong city.
 
 Local test: create a git-ignored `.dev.vars` with those values and run
 `wrangler dev`.

@@ -30,3 +30,12 @@ esp_err_t workout_face_start(esp_gsp_handle_t ui, const workout_face_ids_t *ids)
 void workout_face_scene_changed(uint16_t scene_id);
 bool workout_face_input(int32_t x, int32_t y, bool pressed);
 bool workout_face_active(void);
+/* Weather screen (relay GET /weather). */
+typedef struct {
+    uint16_t scene, canvas, temp, cond, upd, pollen;
+    uint16_t hour[5], htemp[5];
+    uint16_t fscene, fcanvas, ftitle, fupd;
+    uint16_t fday[5], fpop[5], flo[5], fhi[5];
+} weather_face_ids_t;
+esp_err_t weather_face_start(esp_gsp_handle_t ui, const weather_face_ids_t *ids);
+void weather_face_scene_changed(uint16_t scene_id);

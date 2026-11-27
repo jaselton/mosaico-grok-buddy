@@ -21,9 +21,13 @@ typedef struct {
     uint16_t timer_scene, timer_canvas, timer_digits, timer_sub, timer_reset;
     uint16_t usage_scene, usage_canvas, usage_title, usage_money, usage_msub, usage_week, usage_voice, usage_upd;
     uint16_t workout_scene, workout_canvas, workout_title, workout_phase, workout_digits, workout_round, workout_btn;
+    uint16_t weather_scene, weather_canvas, weather_temp, weather_cond, weather_upd, weather_pollen;
+    uint16_t weather_hour[5], weather_htemp[5];
+    uint16_t forecast_scene, forecast_canvas, forecast_title, forecast_upd;
+    uint16_t forecast_day[5], forecast_pop[5], forecast_lo[5], forecast_hi[5];
 } app_clock_ids_t;
 
-/** Starts the world-timer, countdown-timer and usage screens. */
+/** Starts the world-timer, weather, countdown-timer, workout and usage screens. */
 esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids);
 
 /** Tell the clock which scene is showing (drives repaint and touch). */

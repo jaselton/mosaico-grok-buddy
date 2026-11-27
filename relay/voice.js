@@ -29,12 +29,24 @@ const RELAY_TOOLS = [
   },
 ];
 
-function placeOf(cf) {
+// HOME_LOCATION (secret, optional): "lat,lon,City,ZIP" overrides IP geolocation,
+// which can land on the ISP's hub city instead of where the device is.
+export function placeOf(cf, env) {
+  const home = String(env?.HOME_LOCATION || "").split(",").map((x) => x.trim());
+  if (home.length >= 3 && Number.isFinite(Number(home[0])) && Number.isFinite(Number(home[1]))) {
+    return {
+      place: [home[2], cf?.region, cf?.country].filter(Boolean).join(", "),
+      city: home[2], zip: home[3] || cf?.postalCode,
+      lat: Number(home[0]), lon: Number(home[1]),
+      tz: cf?.timezone || "UTC", us: (cf?.country || "US") === "US",
+    };
+  }
   const parts = [cf?.city, cf?.region, cf?.country].filter(Boolean);
   return {
     place: parts.join(", ") || "unknown",
     lat: Number(cf?.latitude),
     lon: Number(cf?.longitude),
+    city: cf?.city, zip: cf?.postalCode,
     tz: cf?.timezone || "UTC",
     us: cf?.country === "US",
   };
@@ -182,7 +194,7 @@ export async function handleVoice(req, env, ctx, stub) {
     finish("budget");
   }, Math.min(maxSessionSec, left) * 1000);
 
-  const loc = placeOf(req.cf);
+  const loc = placeOf(req.cf, env);
   let swallowDone = false;   // hide the tool-call turn's response.done from the device
   dev.addEventListener("message", (e) => safeSend(upstream, rewriteFromDevice(e.data, loc)));
   upstream.addEventListener("message", async (e) => {

@@ -71,4 +71,7 @@ bool voice_bot_look(const char *call_id, const char *question);
 typedef void (*voice_summary_cb_t)(const char *json, void *ctx);
 void voice_bot_set_summary_cb(voice_summary_cb_t cb, void *ctx);
 void voice_bot_request_summary(void);
+/* Weather (relay GET /weather), same pattern as the summary. */
+void voice_bot_set_weather_cb(voice_summary_cb_t cb, void *ctx);
+void voice_bot_request_weather(void);
 

@@ -8,6 +8,7 @@
 //   GET  /team-usage device: team spend summary via the Management API (usage.js)
 //   POST /team-usage helper (USAGE_TOKEN) -> relay: team usage numbers read on the owner's Mac
 //   GET  /summary  device: one small JSON for the usage screen (voice, bot tasks, team)
+//   GET  /weather  device: current conditions, next 12 hours, next 3 days (weather.js)
 //   GET  /health   open liveness check (no data)
 //
 // Secrets (wrangler secret put): DEVICE_TOKEN, BOT_TOKEN, XAI_API_KEY,
@@ -18,6 +19,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { dailyLimitSeconds, handleVoice } from "./voice.js";
 import { teamUsage } from "./usage.js";
+import { weatherSummary } from "./weather.js";
 
 const MAX_TASK_CHARS = 2000;
 const MAX_RESULT_CHARS = 2000;
@@ -211,6 +213,11 @@ export default {
       const limitMin = dailyLimitSeconds(env) / 60;
       const rate = Number(env.USD_PER_MINUTE || "0.08");
       return json(await stub.summary(limitMin, rate));
+    }
+
+    if (url.pathname === "/weather" && req.method === "GET") {
+      if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
+      try { return json(await weatherSummary(req, env)); } catch { return json({ ok: false, error: "weather unavailable" }, 502); }
     }
 
     if (url.pathname === "/look" && req.method === "POST") {

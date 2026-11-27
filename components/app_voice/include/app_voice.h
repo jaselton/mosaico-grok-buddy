@@ -35,6 +35,9 @@ typedef void (*app_voice_summary_cb_t)(const char *json, void *ctx);
 void app_voice_set_summary_handler(app_voice_summary_cb_t cb, void *ctx);
 /** Ask for a fresh summary soon (no-op without the relay). */
 void app_voice_request_summary(void);
+/** Weather from the relay (GET /weather), same contract as the summary. */
+void app_voice_set_weather_handler(app_voice_summary_cb_t cb, void *ctx);
+void app_voice_request_weather(void);
 
 /** Workout and timer beeps through the speaker (any task, non-blocking). */
 typedef enum {

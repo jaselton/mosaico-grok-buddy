@@ -23,4 +23,5 @@ add_subdirectory("${ESP_GSP_COMPONENT_DIR}/tools/sim_bridge" sim_bridge)
 gsp_add_backend(buddy_backend
     SOURCES ../app_buddy.c platform_pc.c
     INCLUDE_DIRECTORIES ../include
-    SCENES ../ui/main.json)
+    # Same scenes, same order, as the device bundle (../CMakeLists.txt).
+    SCENES ../ui/main.json ../ui/clock.json ../ui/weather.json ../ui/forecast.json ../ui/timer.json ../ui/workout.json ../ui/usage.json)

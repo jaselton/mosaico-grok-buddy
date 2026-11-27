@@ -1605,3 +1605,13 @@ void app_voice_set_screen_handler(app_voice_screen_cb_t cb, void *ctx)
     s.screen_ctx = ctx;
     s.screen_cb = cb;
 }
+
+void app_voice_set_weather_handler(app_voice_summary_cb_t cb, void *ctx)
+{
+    voice_bot_set_weather_cb(cb, ctx);
+}
+
+void app_voice_request_weather(void)
+{
+    voice_bot_request_weather();
+}

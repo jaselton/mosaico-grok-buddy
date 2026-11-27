@@ -10,9 +10,20 @@
 #include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define GSP_BUNDLE_ENABLE_RAW_IDS 1   /* clock canvas bind (scene-local) */
 #include "bundle_gsp.h"
+#ifndef ESP_PLATFORM
+/* The PC sim_bridge packs the same scenes under symbol "bridge_bundle". */
+#define GSP_BUNDLE_SCENE_BUDDY   GSP_BRIDGE_BUNDLE_SCENE_BUDDY
+#define GSP_BUNDLE_SCENE_CLOCK   GSP_BRIDGE_BUNDLE_SCENE_CLOCK
+#define GSP_BUNDLE_SCENE_TIMER   GSP_BRIDGE_BUNDLE_SCENE_TIMER
+#define GSP_BUNDLE_SCENE_WORKOUT GSP_BRIDGE_BUNDLE_SCENE_WORKOUT
+#define GSP_BUNDLE_SCENE_USAGE   GSP_BRIDGE_BUNDLE_SCENE_USAGE
+#define GSP_BUNDLE_SCENE_WEATHER GSP_BRIDGE_BUNDLE_SCENE_WEATHER
+#define GSP_BUNDLE_SCENE_FORECAST GSP_BRIDGE_BUNDLE_SCENE_FORECAST
+#endif
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
 #define LINE_LOCK(h) taskENTER_CRITICAL(&(h)->line_lock)
@@ -777,6 +788,32 @@ void app_buddy_screen_ids(app_buddy_screen_ids_t *out)
     out->usage_week = GSP_USAGE_BIND_UWEEK;
     out->usage_voice = GSP_USAGE_BIND_UVOICE;
     out->usage_upd = GSP_USAGE_BIND_UUPD;
+    out->weather_scene = GSP_BUNDLE_SCENE_WEATHER;
+    out->weather_canvas = GSP_WEATHER_BIND_XFACE;
+    out->weather_temp = GSP_WEATHER_BIND_XTEMP;
+    out->weather_cond = GSP_WEATHER_BIND_XCOND;
+    const uint16_t xh[5] = { GSP_WEATHER_BIND_XH0, GSP_WEATHER_BIND_XH1, GSP_WEATHER_BIND_XH2,
+                             GSP_WEATHER_BIND_XH3, GSP_WEATHER_BIND_XH4 };
+    const uint16_t xt[5] = { GSP_WEATHER_BIND_XT0, GSP_WEATHER_BIND_XT1, GSP_WEATHER_BIND_XT2,
+                             GSP_WEATHER_BIND_XT3, GSP_WEATHER_BIND_XT4 };
+    for (int i = 0; i < 5; ++i) {
+        out->weather_hour[i] = xh[i];
+        out->weather_htemp[i] = xt[i];
+    }
+    out->weather_upd = GSP_WEATHER_BIND_XUPD;
+    out->weather_pollen = GSP_WEATHER_BIND_XPOLLEN;
+    out->forecast_scene = GSP_BUNDLE_SCENE_FORECAST;
+    out->forecast_canvas = GSP_FORECAST_BIND_FFACE;
+    out->forecast_title = GSP_FORECAST_BIND_FTITLE;
+    out->forecast_upd = GSP_FORECAST_BIND_FUPD;
+    const uint16_t fd[5] = { GSP_FORECAST_BIND_FD0, GSP_FORECAST_BIND_FD1, GSP_FORECAST_BIND_FD2, GSP_FORECAST_BIND_FD3, GSP_FORECAST_BIND_FD4 };
+    const uint16_t fp[5] = { GSP_FORECAST_BIND_FP0, GSP_FORECAST_BIND_FP1, GSP_FORECAST_BIND_FP2, GSP_FORECAST_BIND_FP3, GSP_FORECAST_BIND_FP4 };
+    const uint16_t fl[5] = { GSP_FORECAST_BIND_FL0, GSP_FORECAST_BIND_FL1, GSP_FORECAST_BIND_FL2, GSP_FORECAST_BIND_FL3, GSP_FORECAST_BIND_FL4 };
+    const uint16_t fh[5] = { GSP_FORECAST_BIND_FH0, GSP_FORECAST_BIND_FH1, GSP_FORECAST_BIND_FH2, GSP_FORECAST_BIND_FH3, GSP_FORECAST_BIND_FH4 };
+    memcpy(out->forecast_day, fd, sizeof(fd));
+    memcpy(out->forecast_pop, fp, sizeof(fp));
+    memcpy(out->forecast_lo, fl, sizeof(fl));
+    memcpy(out->forecast_hi, fh, sizeof(fh));
     out->workout_scene = GSP_BUNDLE_SCENE_WORKOUT;
     out->workout_canvas = GSP_WORKOUT_BIND_WFACE;
     out->workout_title = GSP_WORKOUT_BIND_WTITLE;
