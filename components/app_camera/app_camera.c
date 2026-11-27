@@ -22,6 +22,7 @@ static const char *TAG = "app_camera";
 #define JPEG_MAX         (200 * 1024)
 #define JPEG_QUALITY     75
 #define SETTLE_FRAMES    4     /* let auto-exposure settle after power-up */
+#define FRAME_TIMEOUT_MS 2500
 
 static struct {
     bool ready;
@@ -184,6 +185,7 @@ esp_err_t app_camera_capture_jpeg(uint8_t **jpeg, size_t *len)
     mosaico_camera_handle_t cam = NULL;
     mosaico_camera_config_t cfg = MOSAICO_CAMERA_DEFAULT_CONFIG();
     cfg.slot = MOSAICO_MODULE_MGR_SLOT_LEFT;
+    cfg.frame_timeout_ms = FRAME_TIMEOUT_MS;   /* the SC101IOT can be slow to deliver its first frame */
     esp_err_t err = rgb ? mosaico_camera_new(&cfg, &cam) : ESP_ERR_NO_MEM;
     if (rgb) {
         c.present = err == ESP_OK;   /* plugged or unplugged since boot */
@@ -198,19 +200,34 @@ esp_err_t app_camera_capture_jpeg(uint8_t **jpeg, size_t *len)
         err = mosaico_camera_start_stream(cam);
     }
     int w = 0, h = 0;
-    if (err == ESP_OK) {
-        err = mosaico_camera_discard_frames(cam, SETTLE_FRAMES);
-    }
-    if (err == ESP_OK) {
-        mosaico_camera_frame_t fr = { 0 };
-        err = mosaico_camera_get_frame(cam, &fr);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "frame %" PRIu32 "x%" PRIu32, fr.width, fr.height);
-            err = convert(&fr, rgb, out_size, &w, &h);
-            const esp_err_t r = mosaico_camera_return_frame(cam, &fr);
-            if (err == ESP_OK) {
-                err = r;
+    /* A stream that never delivers a frame gets one restart (what the BSP's own
+     * camera app does), then we give up. */
+    for (int attempt = 0; err == ESP_OK && attempt < 2; ++attempt) {
+        if (attempt > 0) {
+            ESP_LOGW(TAG, "no frames from the camera, restarting the stream");
+            err = mosaico_camera_restart(cam);
+            if (err != ESP_OK) {
+                break;
             }
+        }
+        err = mosaico_camera_discard_frames(cam, SETTLE_FRAMES);
+        if (err == ESP_OK) {
+            mosaico_camera_frame_t fr = { 0 };
+            err = mosaico_camera_get_frame(cam, &fr);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "frame %" PRIu32 "x%" PRIu32, fr.width, fr.height);
+                err = convert(&fr, rgb, out_size, &w, &h);
+                const esp_err_t r = mosaico_camera_return_frame(cam, &fr);
+                if (err == ESP_OK) {
+                    err = r;
+                }
+            }
+        }
+        if (err != ESP_ERR_TIMEOUT) {
+            break;
+        }
+        if (attempt == 0) {
+            err = ESP_OK;   /* retry after the restart */
         }
     }
     if (cam) {
