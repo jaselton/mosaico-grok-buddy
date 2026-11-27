@@ -38,4 +38,13 @@ typedef struct {
     uint16_t fday[5], fpop[5], flo[5], fhi[5];
 } weather_face_ids_t;
 esp_err_t weather_face_start(esp_gsp_handle_t ui, const weather_face_ids_t *ids);
+/* Calendar screen (relay GET /calendar). */
+typedef struct {
+    uint16_t scene, canvas, date, allday, when, title, sub, upd;
+    uint16_t rt[4], rn[4];
+} calendar_face_ids_t;
+typedef void (*calendar_next_cb_t)(const char *note);
+esp_err_t calendar_face_start(esp_gsp_handle_t ui, const calendar_face_ids_t *ids);
+void calendar_face_scene_changed(uint16_t scene_id);
+void calendar_face_set_next_handler(calendar_next_cb_t cb);
 void weather_face_scene_changed(uint16_t scene_id);

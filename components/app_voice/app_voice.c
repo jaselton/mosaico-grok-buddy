@@ -19,6 +19,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #include "app_alarm.h"
@@ -100,6 +101,18 @@ static const char *TAG = "app_voice";
     "change, so keep your reply to a few words. Use timer_control to pause, "      \
     "resume, reset or check the plain countdown timer."
 
+#define SCREEN_INSTRUCTIONS                                                         \
+    " The device has swipeable screens, in order: eyes (your face, home), clock "   \
+    "(world-time watch with the alarm hand and a chronograph), calendar (current or " \
+    "next event with a countdown, then the ones after), weather (now, next "        \
+    "five hours, pollen), forecast (five days), timer (countdown), workout "        \
+    "(interval timer) and usage (Grok plan usage and voice minutes). When " OWNER    \
+    " asks to see, open or go to one, or asks about their schedule, weather, the "   \
+    "forecast or usage "                                                             \
+    "while you answer, call show_screen; say just a few words since they can see "  \
+    "it. Use get_weather for the numbers (it includes pollen and the coming days) "  \
+    "and get_calendar for events."
+
 #define LOOK_INSTRUCTIONS                                                           \
     " This device has a small camera. When " OWNER " asks what you see, to look at " \
     "something, read something or identify what they're holding, call look with "  \
@@ -107,9 +120,10 @@ static const char *TAG = "app_voice";
 
 #define GREETING_PREFIX                                                             \
     "[" OWNER "'s alarm just rang and they switched it off. Greet them warmly; if it " \
-    "is morning, give a quick briefing: today's date and, after calling get_weather, " \
-    "today's weather in one sentence. Mention the alarm label if there is one. Keep it " \
-    "to two or three short sentences.]\n\n"
+    "is morning, give a quick briefing: today's date; after calling get_weather, "   \
+    "today's weather in one sentence; and, if get_calendar is available, the first " \
+    "thing on today's calendar. Mention the alarm label if there is one. Keep it "   \
+    "to three short sentences.]\n\n"
 
 #define BRIEFING_TASK                                                               \
     "Morning briefing for " OWNER ", who just woke up (their alarm rang). In two or "  \
@@ -430,7 +444,8 @@ static void handle_message(const char *msg, size_t len)
         const cJSON *args = cJSON_GetObjectItemCaseSensitive(root, "arguments");
         if (cJSON_IsString(name) && cJSON_IsString(args) &&
                 (!strcmp(name->valuestring, "set_alarm") || !strcmp(name->valuestring, "cancel_alarms") ||
-                 !strcmp(name->valuestring, "timer_control") || !strcmp(name->valuestring, "workout"))) {
+                 !strcmp(name->valuestring, "timer_control") || !strcmp(name->valuestring, "workout") ||
+                 !strcmp(name->valuestring, "show_screen"))) {
             const size_t n = strlen(name->valuestring) + strlen(args->valuestring) + 2;
             char *t = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
             if (t) {
@@ -693,8 +708,43 @@ static void add_int(cJSON *props, const char *key, const char *desc)
     cJSON_AddStringToObject(p, "description", desc);
 }
 
+/* Screen names Grok can ask for, matching app_voice_screen_t. */
+static const char *const SCREEN_NAMES[] = { "timer", "workout", "eyes", "clock", "weather", "forecast", "usage", "calendar" };
+#define SCREEN_COUNT (sizeof(SCREEN_NAMES) / sizeof(SCREEN_NAMES[0]))
+
+static void tool_show_screen(const char *args, char *out, size_t len)
+{
+    cJSON *a = cJSON_Parse(args);
+    const cJSON *sc = a ? cJSON_GetObjectItemCaseSensitive(a, "screen") : NULL;
+    int which = -1;
+    for (size_t i = 0; cJSON_IsString(sc) && i < SCREEN_COUNT; ++i) {
+        if (!strcasecmp(sc->valuestring, SCREEN_NAMES[i])) {
+            which = (int)i;
+        }
+    }
+    if (which < 0) {
+        snprintf(out, len, "{\"error\":\"unknown screen\"}");
+    } else {
+        show_screen((app_voice_screen_t)which);
+        snprintf(out, len, "{\"showing\":\"%s\"}", SCREEN_NAMES[which]);
+    }
+    cJSON_Delete(a);
+}
+
 static void add_device_tools(cJSON *tools, bool camera)
 {
+    {
+        cJSON *t = cJSON_CreateObject();
+        cJSON_AddStringToObject(t, "type", "function");
+        cJSON_AddStringToObject(t, "name", "show_screen");
+        cJSON_AddStringToObject(t, "description", "Switch the device display to one of its screens.");
+        cJSON *params = cJSON_AddObjectToObject(t, "parameters");
+        cJSON_AddStringToObject(params, "type", "object");
+        add_enum(cJSON_AddObjectToObject(params, "properties"), "screen", "Which screen", SCREEN_NAMES,
+                 (int)SCREEN_COUNT);
+        cJSON_AddItemToArray(cJSON_AddArrayToObject(params, "required"), cJSON_CreateString("screen"));
+        cJSON_AddItemToArray(tools, t);
+    }
     {
         cJSON *t = cJSON_CreateObject();
         cJSON_AddStringToObject(t, "type", "function");
@@ -753,8 +803,9 @@ static void send_session_update(void)
     {
         char now[64];
         app_alarm_format_now(now, sizeof(now));
-        const char *base = s.bot_enabled ? INSTRUCTIONS BOT_INSTRUCTIONS ALARM_INSTRUCTIONS WORKOUT_INSTRUCTIONS
-                                         : INSTRUCTIONS ALARM_INSTRUCTIONS WORKOUT_INSTRUCTIONS;
+        const char *base = s.bot_enabled
+                               ? INSTRUCTIONS BOT_INSTRUCTIONS ALARM_INSTRUCTIONS WORKOUT_INSTRUCTIONS SCREEN_INSTRUCTIONS
+                               : INSTRUCTIONS ALARM_INSTRUCTIONS WORKOUT_INSTRUCTIONS SCREEN_INSTRUCTIONS;
         const char *look = camera ? LOOK_INSTRUCTIONS : "";
         const size_t n = strlen(base) + strlen(look) + strlen(now) + 48;
         char *ins = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1102,6 +1153,8 @@ static void on_event(const msg_t *m)
                 tool_timer_control(nl + 1, out, sizeof(out));
             } else if (!strcmp(m->text, "workout")) {
                 tool_workout(nl + 1, out, sizeof(out));
+            } else if (!strcmp(m->text, "show_screen")) {
+                tool_show_screen(nl + 1, out, sizeof(out));
             } else if (!strcmp(m->text, "cancel_alarms")) {
                 snprintf(out, sizeof(out), "{\"cancelled\":%d}", app_alarm_cancel_all());
             } else {
@@ -1609,6 +1662,16 @@ void app_voice_set_screen_handler(app_voice_screen_cb_t cb, void *ctx)
 void app_voice_set_weather_handler(app_voice_summary_cb_t cb, void *ctx)
 {
     voice_bot_set_weather_cb(cb, ctx);
+}
+
+void app_voice_set_calendar_handler(app_voice_summary_cb_t cb, void *ctx)
+{
+    voice_bot_set_calendar_cb(cb, ctx);
+}
+
+void app_voice_request_calendar(void)
+{
+    voice_bot_request_calendar();
 }
 
 void app_voice_request_weather(void)

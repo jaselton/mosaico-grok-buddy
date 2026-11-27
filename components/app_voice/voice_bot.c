@@ -48,6 +48,9 @@ static struct {
     volatile bool summary_wanted;
     voice_summary_cb_t summary_cb;
     void *summary_ctx;
+    volatile bool calendar_wanted;
+    voice_summary_cb_t calendar_cb;
+    void *calendar_ctx;
     volatile bool weather_wanted;
     voice_summary_cb_t weather_cb;
     void *weather_ctx;
@@ -219,6 +222,15 @@ static void fetch_weather(void)
     }
 }
 
+static void fetch_calendar(void)
+{
+    b.calendar_wanted = false;
+    const int status = request(HTTP_METHOD_GET, "/calendar", NULL);
+    if (b.calendar_cb) {
+        b.calendar_cb(status == 200 ? b.resp : NULL, b.calendar_ctx);
+    }
+}
+
 static void bot_task(void *arg)
 {
     (void)arg;
@@ -249,6 +261,9 @@ static void bot_task(void *arg)
         }
         if (b.weather_wanted && voice_wifi_wait_connected(0)) {
             fetch_weather();
+        }
+        if (b.calendar_wanted && voice_wifi_wait_connected(0)) {
+            fetch_calendar();
         }
         const int64_t now = esp_timer_get_time();
         if (now >= next_poll_us) {
@@ -342,6 +357,17 @@ void voice_bot_set_weather_cb(voice_summary_cb_t cb, void *ctx)
 {
     b.weather_ctx = ctx;
     b.weather_cb = cb;
+}
+
+void voice_bot_set_calendar_cb(voice_summary_cb_t cb, void *ctx)
+{
+    b.calendar_ctx = ctx;
+    b.calendar_cb = cb;
+}
+
+void voice_bot_request_calendar(void)
+{
+    b.calendar_wanted = true;
 }
 
 void voice_bot_request_weather(void)

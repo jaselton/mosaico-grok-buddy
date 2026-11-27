@@ -9,6 +9,9 @@
 //   {"type":"error","error":{"code":"daily_budget_exhausted","message":...}}
 // and closes with code 4002.
 
+import { pollen } from "./weather.js";
+import { calendarForVoice } from "./calendar.js";
+
 const BUDGET_CLOSE_CODE = 4002;
 
 // Relay-side tools: answered here, never forwarded to the device. Location comes
@@ -18,7 +21,7 @@ const RELAY_TOOLS = [
   {
     type: "function",
     name: "get_weather",
-    description: "Current weather and today's forecast where the device is (its Wi-Fi location).",
+    description: "Current weather, today's forecast, the next four days and today's pollen count where the device is.",
     parameters: { type: "object", properties: {} },
   },
   {
@@ -68,36 +71,95 @@ async function weather(loc) {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m` +
     `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code` +
-    `&temperature_unit=${f}&wind_speed_unit=${w}&timezone=auto&forecast_days=1`;
+    `&temperature_unit=${f}&wind_speed_unit=${w}&timezone=auto&forecast_days=5`;
   try {
     const j = await (await fetch(url)).json();
+    let pol = null;
+    if (loc.us) {
+      try { pol = await pollen(loc.zip); } catch { pol = null; }
+    }
     const unit = loc.us ? "°F" : "°C";
     return {
       place: loc.place,
       now: `${Math.round(j.current.temperature_2m)}${unit}, feels like ${Math.round(j.current.apparent_temperature)}${unit}, ${WMO(j.current.weather_code)}, wind ${Math.round(j.current.wind_speed_10m)} ${w}`,
       today: `high ${Math.round(j.daily.temperature_2m_max[0])}${unit}, low ${Math.round(j.daily.temperature_2m_min[0])}${unit}, ${WMO(j.daily.weather_code[0])}, ${j.daily.precipitation_probability_max[0]}% chance of precipitation`,
+      next_days: j.daily.time.slice(1).map((d, i) => {
+        const k = i + 1;
+        const day = new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+        return `${day}: high ${Math.round(j.daily.temperature_2m_max[k])}${unit}, low ${Math.round(j.daily.temperature_2m_min[k])}${unit}, ${WMO(j.daily.weather_code[k])}, ${j.daily.precipitation_probability_max[k]}% precipitation`;
+      }),
+      pollen: pol ? `index ${pol.i} of 12 (${pol.lvl})${pol.top.length ? ", mainly " + pol.top.join(" and ") : ""}; tomorrow ${pol.tmr ?? "unknown"}` : "unavailable",
     };
   } catch {
     return { error: "weather unavailable" };
   }
 }
 
-async function runRelayTool(name, loc) {
+// Optional peer device (PEER_URL + PEER_TOKEN secrets, PEER_NAME / PEER_FROM vars):
+// another voice gadget's relay that accepts POST /message {from, text} and speaks it.
+function peerTool(env) {
+  if (!env.PEER_URL || !env.PEER_TOKEN) return null;
+  const who = env.PEER_NAME || "the other device";
+  return {
+    type: "function",
+    name: "send_message",
+    description: `Send a short spoken message to ${who}. It chimes and reads it out loud right away (between 9 pm and 7 am it waits until morning). Use when asked to tell, send or pass something on to ${who}. Pass the message as it should be said, in the user's words.`,
+    parameters: { type: "object", properties: { message: { type: "string", description: "What to say, in one or two sentences." } }, required: ["message"] },
+  };
+}
+
+async function sendPeer(env, args) {
+  const text = String(args?.message || "").trim().slice(0, 500);
+  if (!text) return { error: "empty message" };
+  try {
+    const r = await fetch(String(env.PEER_URL).replace(/\/$/, "") + "/message", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.PEER_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ from: env.PEER_FROM || "", text }),
+    });
+    console.log(JSON.stringify({ ev: "peer_message", status: r.status }));
+    if (!r.ok) return { error: "message didn't go through" };
+    const j = await r.json();
+    if (j.delivered) return { sent: true, status: "playing now" };
+    if (j.held) return { sent: true, status: "queued: it's quiet hours there, so it plays after 7 am" };
+    if (!j.online) return { sent: true, status: "queued: that device is offline, it plays when it reconnects" };
+    return { sent: true, status: "queued: it's busy and plays in a moment" };
+  } catch {
+    return { error: "message didn't go through" };
+  }
+}
+
+const CAL_TOOL = {
+  type: "function",
+  name: "get_calendar",
+  description: "The user's calendar. With no day: the next few events. With day (today, tomorrow, a weekday, or YYYY-MM-DD): everything that day. Use for what's next, am I free at, when is, what's on today.",
+  parameters: { type: "object", properties: { day: { type: "string", description: "today, tomorrow, a weekday name, or YYYY-MM-DD; omit for the next few events" } } },
+};
+
+async function runRelayTool(name, loc, env, args) {
+  if (name === "get_calendar") return calendarForVoice(env, loc.tz, args?.day);
+  if (name === "send_message") return sendPeer(env, args);
   if (name === "get_weather") return weather(loc);
   if (name === "get_location") return { place: loc.place, time_zone: loc.tz, local_time: localTime(loc.tz) };
   return null;
 }
 
 /* Device -> xAI: add relay tools and location context to session.update. */
-function rewriteFromDevice(data, loc) {
+function rewriteFromDevice(data, loc, tools, env) {
   if (typeof data !== "string" || !data.startsWith('{"type":"session.update"')) return data;
   try {
     const m = JSON.parse(data);
     const ss = m.session || (m.session = {});
-    ss.tools = [...(ss.tools || []), ...RELAY_TOOLS];
+    ss.tools = [...(ss.tools || []), ...tools];
     ss.instructions = (ss.instructions || "") +
       ` The device is in ${loc.place} (time zone ${loc.tz}); local time there is ${localTime(loc.tz)}.` +
-      " For weather or location questions call get_weather or get_location.";
+      " For weather or location questions call get_weather or get_location." +
+      (tools.some((t) => t.name === "get_calendar")
+        ? " For schedule questions (what's next, am I free, when is) call get_calendar; give times in plain speech and keep it short."
+        : "") +
+      (tools.some((t) => t.name === "send_message")
+        ? ` You can send spoken messages to ${env.PEER_NAME || "the other device"} with send_message; say in a few words that it's sent and when it will play.`
+        : "");
     return JSON.stringify(m);
   } catch {
     return data;
@@ -195,16 +257,19 @@ export async function handleVoice(req, env, ctx, stub) {
   }, Math.min(maxSessionSec, left) * 1000);
 
   const loc = placeOf(req.cf, env);
+  const tools = [...RELAY_TOOLS, env.CAL_ICS_URLS ? CAL_TOOL : null, peerTool(env)].filter(Boolean);
   let swallowDone = false;   // hide the tool-call turn's response.done from the device
-  dev.addEventListener("message", (e) => safeSend(upstream, rewriteFromDevice(e.data, loc)));
+  dev.addEventListener("message", (e) => safeSend(upstream, rewriteFromDevice(e.data, loc, tools, env)));
   upstream.addEventListener("message", async (e) => {
     const d = e.data;
     // Only tool-call messages are inspected; audio deltas pass straight through.
     if (typeof d === "string" && d.includes('"response.function_call_arguments.done"')) {
       try {
         const m = JSON.parse(d);
-        if (RELAY_TOOLS.some((t) => t.name === m.name)) {
-          const out = await runRelayTool(m.name, loc);
+        if (tools.some((t) => t.name === m.name)) {
+          let args = {};
+          try { args = JSON.parse(m.arguments || "{}"); } catch { /* no args */ }
+          const out = await runRelayTool(m.name, loc, env, args);
           safeSend(upstream, JSON.stringify({
             type: "conversation.item.create",
             item: { type: "function_call_output", call_id: m.call_id, output: JSON.stringify(out) },

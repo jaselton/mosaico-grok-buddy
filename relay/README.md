@@ -30,5 +30,16 @@ Secrets (`wrangler secret put`): `DEVICE_TOKEN`, `BOT_TOKEN` (via
 Optional secret `HOME_LOCATION` = `lat,lon,City,ZIP` pins the weather, pollen
 and voice location when IP geolocation lands on the wrong city.
 
+Optional peer messages: set secrets `PEER_URL` (another relay that accepts
+`POST /message {from, text}` with a bearer token), `PEER_TOKEN`, and optionally
+`PEER_NAME` (how Grok refers to it) and `PEER_FROM` (the sender name it hears).
+Grok then gets a `send_message` tool: "tell the other device good morning".
+
+Optional calendar: set secret `CAL_ICS_URLS` to one or more private iCal feed
+links, comma-separated (Google Calendar: Settings > your calendar > Integrate
+calendar > "Secret address in iCal format"). The device gets a calendar screen
+(`GET /calendar`, the next week with recurrences expanded) and a next-event line
+under the eyes, and Grok gets a `get_calendar` tool.
+
 Local test: create a git-ignored `.dev.vars` with those values and run
 `wrangler dev`.

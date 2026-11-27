@@ -100,11 +100,14 @@ typedef struct {
     uint16_t clock_scene, clock_canvas;
     uint16_t timer_scene, timer_canvas, timer_digits, timer_sub, timer_reset;
     uint16_t usage_scene, usage_canvas, usage_title, usage_money, usage_msub, usage_week, usage_voice, usage_upd;
+    uint16_t buddy_scene;
     uint16_t weather_scene, weather_canvas, weather_temp, weather_cond, weather_upd, weather_pollen;
     uint16_t weather_hour[5], weather_htemp[5];
     uint16_t forecast_scene, forecast_canvas, forecast_title, forecast_upd;
     uint16_t forecast_day[5], forecast_pop[5], forecast_lo[5], forecast_hi[5];
     uint16_t workout_scene, workout_canvas, workout_title, workout_phase, workout_digits, workout_round, workout_btn;
+    uint16_t cal_scene, cal_canvas, cal_date, cal_allday, cal_when, cal_title, cal_sub, cal_upd;
+    uint16_t cal_rt[4], cal_rn[4];
 } app_buddy_screen_ids_t;
 void app_buddy_screen_ids(app_buddy_screen_ids_t *out);
 
@@ -118,6 +121,7 @@ void app_buddy_set_status(app_buddy_handle_t handle, const char *text);
 typedef enum {
     APP_BUDDY_NOTE_ALERT = 0,   /* e.g. the bot needs you */
     APP_BUDDY_NOTE_USAGE,       /* e.g. Grok usage nearly used up */
+    APP_BUDDY_NOTE_NEXT,        /* next calendar event, when one is soon */
     APP_BUDDY_NOTE_COUNT,
 } app_buddy_note_t;
 void app_buddy_set_note(app_buddy_handle_t handle, app_buddy_note_t slot, const char *text);

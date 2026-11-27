@@ -74,4 +74,6 @@ void voice_bot_request_summary(void);
 /* Weather (relay GET /weather), same pattern as the summary. */
 void voice_bot_set_weather_cb(voice_summary_cb_t cb, void *ctx);
 void voice_bot_request_weather(void);
+void voice_bot_set_calendar_cb(voice_summary_cb_t cb, void *ctx);
+void voice_bot_request_calendar(void);
 

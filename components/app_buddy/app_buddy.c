@@ -23,6 +23,7 @@
 #define GSP_BUNDLE_SCENE_USAGE   GSP_BRIDGE_BUNDLE_SCENE_USAGE
 #define GSP_BUNDLE_SCENE_WEATHER GSP_BRIDGE_BUNDLE_SCENE_WEATHER
 #define GSP_BUNDLE_SCENE_FORECAST GSP_BRIDGE_BUNDLE_SCENE_FORECAST
+#define GSP_BUNDLE_SCENE_CALENDAR GSP_BRIDGE_BUNDLE_SCENE_CALENDAR
 #endif
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
@@ -788,6 +789,7 @@ void app_buddy_screen_ids(app_buddy_screen_ids_t *out)
     out->usage_week = GSP_USAGE_BIND_UWEEK;
     out->usage_voice = GSP_USAGE_BIND_UVOICE;
     out->usage_upd = GSP_USAGE_BIND_UUPD;
+    out->buddy_scene = GSP_BUNDLE_SCENE_BUDDY;
     out->weather_scene = GSP_BUNDLE_SCENE_WEATHER;
     out->weather_canvas = GSP_WEATHER_BIND_XFACE;
     out->weather_temp = GSP_WEATHER_BIND_XTEMP;
@@ -821,6 +823,18 @@ void app_buddy_screen_ids(app_buddy_screen_ids_t *out)
     out->workout_digits = GSP_WORKOUT_BIND_WDIGITS;
     out->workout_round = GSP_WORKOUT_BIND_WROUND;
     out->workout_btn = GSP_WORKOUT_BIND_WBTN;
+    out->cal_scene = GSP_BUNDLE_SCENE_CALENDAR;
+    out->cal_canvas = GSP_CALENDAR_BIND_KFACE;
+    out->cal_date = GSP_CALENDAR_BIND_KDATE;
+    out->cal_allday = GSP_CALENDAR_BIND_KALLDAY;
+    out->cal_when = GSP_CALENDAR_BIND_KWHEN;
+    out->cal_title = GSP_CALENDAR_BIND_KTITLE;
+    out->cal_sub = GSP_CALENDAR_BIND_KSUB;
+    out->cal_upd = GSP_CALENDAR_BIND_KUPD;
+    const uint16_t kt[4] = { GSP_CALENDAR_BIND_KT0, GSP_CALENDAR_BIND_KT1, GSP_CALENDAR_BIND_KT2, GSP_CALENDAR_BIND_KT3 };
+    const uint16_t kn[4] = { GSP_CALENDAR_BIND_KN0, GSP_CALENDAR_BIND_KN1, GSP_CALENDAR_BIND_KN2, GSP_CALENDAR_BIND_KN3 };
+    memcpy(out->cal_rt, kt, sizeof(kt));
+    memcpy(out->cal_rn, kn, sizeof(kn));
 }
 
 static void show_line(app_buddy_handle_t h)

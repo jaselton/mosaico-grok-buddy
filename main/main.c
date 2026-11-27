@@ -97,8 +97,19 @@ static app_buddy_screen_ids_t s_ids;
 static void on_show_screen(app_voice_screen_t scr, void *ctx)
 {
     (void)ctx;
-    esp_gsp_goto_scene(application.ui, scr == APP_VOICE_SCREEN_WORKOUT ? s_ids.workout_scene : s_ids.timer_scene,
-                       ESP_GSP_CROSS_FADE);
+    uint16_t scene;
+    switch (scr) {
+    case APP_VOICE_SCREEN_WORKOUT: scene = s_ids.workout_scene; break;
+    case APP_VOICE_SCREEN_EYES: scene = s_ids.buddy_scene; break;
+    case APP_VOICE_SCREEN_CLOCK: scene = s_ids.clock_scene; break;
+    case APP_VOICE_SCREEN_WEATHER: scene = s_ids.weather_scene; break;
+    case APP_VOICE_SCREEN_FORECAST: scene = s_ids.forecast_scene; break;
+    case APP_VOICE_SCREEN_CALENDAR: scene = s_ids.cal_scene; break;
+    case APP_VOICE_SCREEN_USAGE: scene = s_ids.usage_scene; break;
+    case APP_VOICE_SCREEN_TIMER:
+    default: scene = s_ids.timer_scene; break;
+    }
+    esp_gsp_goto_scene(application.ui, scene, ESP_GSP_CROSS_FADE);
 }
 
 /* Usage warning under the eyes; a worried look when it first appears. */
@@ -112,6 +123,12 @@ static void on_usage_note(const char *note)
         snprintf(last, sizeof(last), "%s", note);
         app_buddy_set_note(application.controller, APP_BUDDY_NOTE_USAGE, note);
     }
+}
+
+/* Next calendar event under the eyes (lowest-priority line). */
+static void on_next_event(const char *note)
+{
+    app_buddy_set_note(application.controller, APP_BUDDY_NOTE_NEXT, note);
 }
 
 /* Night mode 22:00-06:00: dim screen, sleepy face, no wake word, messages
@@ -223,9 +240,20 @@ void app_main(void)
     memcpy(clock_ids.forecast_pop, ids.forecast_pop, sizeof(ids.forecast_pop));
     memcpy(clock_ids.forecast_lo, ids.forecast_lo, sizeof(ids.forecast_lo));
     memcpy(clock_ids.forecast_hi, ids.forecast_hi, sizeof(ids.forecast_hi));
+    clock_ids.cal_scene = ids.cal_scene;
+    clock_ids.cal_canvas = ids.cal_canvas;
+    clock_ids.cal_date = ids.cal_date;
+    clock_ids.cal_allday = ids.cal_allday;
+    clock_ids.cal_when = ids.cal_when;
+    clock_ids.cal_title = ids.cal_title;
+    clock_ids.cal_sub = ids.cal_sub;
+    clock_ids.cal_upd = ids.cal_upd;
+    memcpy(clock_ids.cal_rt, ids.cal_rt, sizeof(ids.cal_rt));
+    memcpy(clock_ids.cal_rn, ids.cal_rn, sizeof(ids.cal_rn));
     if (app_clock_start(application.ui, &clock_ids) == ESP_OK) {
         app_buddy_set_scene_handler(application.controller, on_scene, NULL);
         app_clock_set_usage_note_handler(on_usage_note);
+        app_clock_set_next_event_handler(on_next_event);
     }
     if (voice_err == ESP_OK) {
         app_voice_set_screen_handler(on_show_screen, NULL);

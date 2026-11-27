@@ -25,6 +25,8 @@ typedef struct {
     uint16_t weather_hour[5], weather_htemp[5];
     uint16_t forecast_scene, forecast_canvas, forecast_title, forecast_upd;
     uint16_t forecast_day[5], forecast_pop[5], forecast_lo[5], forecast_hi[5];
+    uint16_t cal_scene, cal_canvas, cal_date, cal_allday, cal_when, cal_title, cal_sub, cal_upd;
+    uint16_t cal_rt[4], cal_rn[4];
 } app_clock_ids_t;
 
 /** Starts the world-timer, weather, countdown-timer, workout and usage screens. */
@@ -36,6 +38,10 @@ void app_clock_scene_changed(uint16_t scene_id);
 /** Usage warning for the eyes screen ("" = none); runs on the UI task. */
 typedef void (*app_clock_usage_note_cb_t)(const char *note);
 void app_clock_set_usage_note_handler(app_clock_usage_note_cb_t cb);
+
+/** Next calendar event for the eyes screen ("" = none soon); runs on the UI task. */
+typedef void (*app_clock_next_cb_t)(const char *note);
+void app_clock_set_next_event_handler(app_clock_next_cb_t cb);
 
 /** Seconds the chronograph has been running (0 if stopped/reset). */
 uint32_t app_clock_chrono_seconds(void);

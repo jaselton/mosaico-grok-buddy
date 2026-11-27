@@ -24,4 +24,4 @@ gsp_add_backend(buddy_backend
     SOURCES ../app_buddy.c platform_pc.c
     INCLUDE_DIRECTORIES ../include
     # Same scenes, same order, as the device bundle (../CMakeLists.txt).
-    SCENES ../ui/main.json ../ui/clock.json ../ui/weather.json ../ui/forecast.json ../ui/timer.json ../ui/workout.json ../ui/usage.json)
+    SCENES ../ui/main.json ../ui/clock.json ../ui/calendar.json ../ui/weather.json ../ui/forecast.json ../ui/timer.json ../ui/workout.json ../ui/usage.json)

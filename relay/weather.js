@@ -13,7 +13,7 @@ const WEEK = 5;   // forecast screen: today + 4
 const POLLEN_CACHE_S = 3600;
 const pollenLevel = (i) => i < 2.5 ? "low" : i < 4.9 ? "low-med" : i < 7.3 ? "medium" : i < 9.7 ? "med-high" : "high";
 
-async function pollen(zip) {
+export async function pollen(zip) {
   if (!/^\d{5}$/.test(zip || "")) return null;
   const url = `https://www.pollen.com/api/forecast/current/pollen/${zip}`;
   const key = new Request(url);

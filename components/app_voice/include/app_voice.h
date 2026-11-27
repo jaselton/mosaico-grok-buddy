@@ -39,6 +39,10 @@ void app_voice_request_summary(void);
 void app_voice_set_weather_handler(app_voice_summary_cb_t cb, void *ctx);
 void app_voice_request_weather(void);
 
+/** Calendar from the relay (GET /calendar), same contract as the summary. */
+void app_voice_set_calendar_handler(app_voice_summary_cb_t cb, void *ctx);
+void app_voice_request_calendar(void);
+
 /** Workout and timer beeps through the speaker (any task, non-blocking). */
 typedef enum {
     APP_VOICE_BEEP_COUNT,   /* 3-2-1 tick */
@@ -55,10 +59,16 @@ void app_voice_set_night(bool night);
 /** True while night mode is in effect (not lifted by a tap or an alarm). */
 bool app_voice_night_active(void);
 
-/** Grok asked to show a screen (a timer or workout it just started). */
+/** Grok asked to show a screen (show_screen tool, or a timer/workout it started). */
 typedef enum {
     APP_VOICE_SCREEN_TIMER,
     APP_VOICE_SCREEN_WORKOUT,
+    APP_VOICE_SCREEN_EYES,
+    APP_VOICE_SCREEN_CLOCK,
+    APP_VOICE_SCREEN_WEATHER,
+    APP_VOICE_SCREEN_FORECAST,
+    APP_VOICE_SCREEN_USAGE,
+    APP_VOICE_SCREEN_CALENDAR,
 } app_voice_screen_t;
 typedef void (*app_voice_screen_cb_t)(app_voice_screen_t screen, void *ctx);
 void app_voice_set_screen_handler(app_voice_screen_cb_t cb, void *ctx);

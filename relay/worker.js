@@ -9,6 +9,7 @@
 //   POST /team-usage helper (USAGE_TOKEN) -> relay: team usage numbers read on the owner's Mac
 //   GET  /summary  device: one small JSON for the usage screen (voice, bot tasks, team)
 //   GET  /weather  device: current conditions, next 12 hours, next 3 days (weather.js)
+//   GET  /calendar device: the next week of events from CAL_ICS_URLS (calendar.js)
 //   GET  /health   open liveness check (no data)
 //
 // Secrets (wrangler secret put): DEVICE_TOKEN, BOT_TOKEN, XAI_API_KEY,
@@ -20,6 +21,8 @@ import { DurableObject } from "cloudflare:workers";
 import { dailyLimitSeconds, handleVoice } from "./voice.js";
 import { teamUsage } from "./usage.js";
 import { weatherSummary } from "./weather.js";
+import { calendarSummary } from "./calendar.js";
+import { placeOf } from "./voice.js";
 
 const MAX_TASK_CHARS = 2000;
 const MAX_RESULT_CHARS = 2000;
@@ -218,6 +221,14 @@ export default {
     if (url.pathname === "/weather" && req.method === "GET") {
       if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
       try { return json(await weatherSummary(req, env)); } catch { return json({ ok: false, error: "weather unavailable" }, 502); }
+    }
+
+    if (url.pathname === "/calendar" && req.method === "GET") {
+      if (!isDevice) return json({ ok: false, error: "unauthorized" }, 401);
+      try { return json(await calendarSummary(env, placeOf(req.cf, env).tz)); } catch (err) {
+        console.log(JSON.stringify({ ev: "calendar_error", err: String(err) }));
+        return json({ ok: false, error: "calendar unavailable" }, 502);
+      }
     }
 
     if (url.pathname === "/look" && req.method === "POST") {

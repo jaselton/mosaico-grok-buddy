@@ -655,12 +655,18 @@ void app_clock_set_usage_note_handler(app_clock_usage_note_cb_t cb)
     usage_face_set_note_handler(cb);
 }
 
+void app_clock_set_next_event_handler(app_clock_next_cb_t cb)
+{
+    calendar_face_set_next_handler(cb);
+}
+
 void app_clock_scene_changed(uint16_t scene_id)
 {
     c.current_scene = scene_id;
     timer_face_scene_changed(scene_id);
     usage_face_scene_changed(scene_id);
     weather_face_scene_changed(scene_id);
+    calendar_face_scene_changed(scene_id);
     workout_face_scene_changed(scene_id);
     if (scene_id == c.scene && c.ui && c.bg) {
         /* Binds are scene-scoped and the scene is rebuilt on arrival, so the
@@ -707,6 +713,14 @@ esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids)
     memcpy(xids.fhi, ids->forecast_hi, sizeof(xids.fhi));
     if (weather_face_start(ui, &xids) != ESP_OK) {
         ESP_LOGW(TAG, "weather screen unavailable");
+    }
+    calendar_face_ids_t kids = { .scene = ids->cal_scene, .canvas = ids->cal_canvas, .date = ids->cal_date,
+                                 .allday = ids->cal_allday, .when = ids->cal_when, .title = ids->cal_title,
+                                 .sub = ids->cal_sub, .upd = ids->cal_upd };
+    memcpy(kids.rt, ids->cal_rt, sizeof(kids.rt));
+    memcpy(kids.rn, ids->cal_rn, sizeof(kids.rn));
+    if (calendar_face_start(ui, &kids) != ESP_OK) {
+        ESP_LOGW(TAG, "calendar screen unavailable");
     }
     const workout_face_ids_t wids = { ids->workout_scene, ids->workout_canvas, ids->workout_title,
                                       ids->workout_phase, ids->workout_digits, ids->workout_round,
