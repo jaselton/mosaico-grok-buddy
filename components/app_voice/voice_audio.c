@@ -390,6 +390,13 @@ void voice_audio_play(const uint8_t *pcm, size_t bytes)
     }
 }
 
+void voice_audio_set_volume(int percent)
+{
+    if (s_spk) {
+        esp_codec_dev_set_out_vol(s_spk, percent < 0 ? 0 : (percent > 100 ? 100 : percent));
+    }
+}
+
 void voice_audio_flush_playback(void)
 {
     atomic_store(&s_flush, true);

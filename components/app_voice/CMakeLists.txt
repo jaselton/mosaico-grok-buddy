@@ -1,7 +1,7 @@
 idf_component_register(SRCS "app_voice.c" "voice_audio.c" "voice_bot.c" "voice_wifi.c"
     INCLUDE_DIRS "include"
     REQUIRES app_buddy esp_common
-    PRIV_REQUIRES app_alarm app_camera app_workout app_config app_wake esp-mosaico-bsp esp_wifi esp_netif esp_event esp_timer
+    PRIV_REQUIRES app_alarm app_camera app_workout app_config app_wake esp-mosaico-bsp esp_wifi nvs_flash esp_netif esp_event esp_timer
         esp_http_client mbedtls log espressif__esp_websocket_client espressif__cjson)
 
 # Optional build-time secrets in projects/grok_desk_buddy/secrets/ (git-ignored):

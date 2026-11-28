@@ -19,6 +19,17 @@ esp_err_t voice_wifi_start(const char *ssid, const char *password, const char *b
                            const char *backup_password);
 /** Wait up to timeout_ms for an IP address; true when connected. */
 bool voice_wifi_wait_connected(uint32_t timeout_ms);
+#define VOICE_WIFI_SCAN_MAX 8
+typedef struct {
+    char ssid[33];
+    int8_t rssi;
+    bool secure, known;
+} voice_wifi_ap_t;
+typedef void (*voice_wifi_scan_cb_t)(const voice_wifi_ap_t *aps, int count, void *ctx);
+esp_err_t voice_wifi_scan(voice_wifi_scan_cb_t cb, void *ctx);
+esp_err_t voice_wifi_join(const char *ssid, const char *password);
+esp_err_t voice_wifi_forget(const char *ssid);
+void voice_wifi_status(char *out, size_t len);
 
 /* ---- Audio (voice_audio.c) ---- */
 
@@ -37,6 +48,7 @@ size_t voice_audio_capture_read(uint8_t *out, size_t max_bytes, uint32_t wait_ms
 /** Queue 24 kHz PCM for playback; drops what does not fit. */
 void voice_audio_play(const uint8_t *pcm, size_t bytes);
 /** Discard queued playback (barge-in). */
+void voice_audio_set_volume(int percent);
 void voice_audio_flush_playback(void);
 /** True while queued playback remains. */
 bool voice_audio_playing(void);

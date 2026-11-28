@@ -1,0 +1,111 @@
+{
+  "screen": "wifipass",
+  "w": 480,
+  "h": 480,
+  "screen_bg": "#0B0F18",
+  "font": "fonts/DejaVuSans-Bold.ttf",
+  "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u00b7\u203a",
+  "default_font_size": 18,
+  "swipe": false,
+  "objects": [
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 20,
+      "y": 16,
+      "w": 110,
+      "h": 40,
+      "text": "Cancel",
+      "font_size": 16,
+      "radius": 20,
+      "bg_color": "#2A3142",
+      "fg_color": "#FFFFFF",
+      "name": "pcancel",
+      "callback": "pcancel",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 140,
+      "y": 24,
+      "w": 320,
+      "h": 26,
+      "text": "",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 17,
+      "fg_color": "#9AA3B5",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u00b7\u203a",
+      "name": "pname",
+      "bind": "pname"
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 20,
+      "y": 70,
+      "w": 440,
+      "h": 56,
+      "bg_color": "#161C28",
+      "border_color": "#3A4458",
+      "border_width": 1,
+      "radius": 10
+    },
+    {
+      "type": "label",
+      "parent": 2,
+      "name": "ppass",
+      "bind": "ppass",
+      "bind_target": "text",
+      "x": 14,
+      "y": 12,
+      "w": 412,
+      "h": 32,
+      "text": "",
+      "input": true,
+      "font_size": 22,
+      "fg_color": "#FFFFFF",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u00b7\u203a",
+      "overflow": "ellipsis"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 20,
+      "y": 132,
+      "w": 440,
+      "h": 22,
+      "text": "Type the password, then OK",
+      "text_align": "center",
+      "overflow": "ellipsis",
+      "font_size": 14,
+      "fg_color": "#7D879B",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "phint",
+      "bind": "phint"
+    },
+    {
+      "type": "keyboard",
+      "parent": -1,
+      "name": "pkb",
+      "x": 0,
+      "y": 160,
+      "w": 480,
+      "h": 320,
+      "font_size": 20,
+      "bg_color": "#0B0F18",
+      "fg_color": "#F8FAFC",
+      "key_color": "#262E3F",
+      "function_color": "#1D3A57",
+      "ok_color": "#167D66",
+      "key_radius": 7
+    }
+  ]
+}

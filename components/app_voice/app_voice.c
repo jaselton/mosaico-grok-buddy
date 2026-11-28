@@ -137,6 +137,8 @@ static const char *TAG = "app_voice";
 
 typedef enum {
     EV_TAP,
+    EV_STOP,
+    EV_PREFS,
     EV_WS_CONNECTED,
     EV_WS_CLOSED,
     EV_SESSION_READY,
@@ -263,6 +265,47 @@ static void on_tap(void *ctx)
     post(EV_TAP);
 }
 
+void app_voice_tap(void)
+{
+    post(EV_TAP);
+}
+
+void app_voice_stop(void)
+{
+    post(EV_STOP);
+}
+
+_Static_assert(sizeof(app_voice_wifi_ap_t) == sizeof(voice_wifi_ap_t), "wifi ap layout");
+_Static_assert(APP_VOICE_WIFI_SCAN_MAX == VOICE_WIFI_SCAN_MAX, "wifi scan max");
+
+esp_err_t app_voice_wifi_scan(app_voice_wifi_scan_cb_t cb, void *ctx)
+{
+    return voice_wifi_scan((voice_wifi_scan_cb_t)cb, ctx);
+}
+
+esp_err_t app_voice_wifi_join(const char *ssid, const char *password)
+{
+    return voice_wifi_join(ssid, password);
+}
+
+void app_voice_wifi_status(char *out, size_t len)
+{
+    voice_wifi_status(out, len);
+}
+
+void app_voice_set_volume(int percent)
+{
+    voice_audio_set_volume(percent);
+}
+
+static atomic_bool s_wake_off;
+
+void app_voice_set_wake_word(bool on)
+{
+    atomic_store(&s_wake_off, !on);
+    post(EV_PREFS);
+}
+
 static void on_ambient(uint8_t level, void *ctx)
 {
     (void)ctx;
@@ -327,7 +370,7 @@ static void set_state(vstate_t st)
  * never while the speaker might be talking). */
 static void update_wake_enable(void)
 {
-    app_wake_set_enabled(s.state == V_IDLE && !s.asleep && !s.alarm_ringing && !night_active() &&
+    app_wake_set_enabled(!atomic_load(&s_wake_off) && s.state == V_IDLE && !s.asleep && !s.alarm_ringing && !night_active() &&
                          esp_timer_get_time() >= s.budget_lock_until_us && !voice_audio_playing());
 }
 
@@ -1258,6 +1301,26 @@ static void on_event(const msg_t *m)
         app_buddy_react(s.buddy, APP_BUDDY_REACT_STARTLE);
         if (open_socket()) {
             start_listening();
+        }
+        break;
+    case EV_PREFS:
+        update_wake_enable();
+        break;
+    case EV_STOP:
+        if (night_active()) {
+            s.night_lift_until_us = esp_timer_get_time() + NIGHT_LIFT_TAP_US;
+            atomic_store(&s.night_now, false);
+        }
+        if (s.state == V_SPEAKING || s.state == V_THINKING) {
+            atomic_store(&s.discard, true);
+            send_json("{\"type\":\"response.cancel\"}");
+            voice_audio_flush_playback();
+            stop_turn_to_idle();
+        } else if (s.state == V_LISTENING || s.state == V_CONNECTING) {
+            if (s.ready) {
+                send_json("{\"type\":\"input_audio_buffer.clear\"}");
+            }
+            stop_turn_to_idle();
         }
         break;
     case EV_TAP:

@@ -13,6 +13,10 @@
 #include <string.h>
 #include <time.h>
 #include "esp_iris.h"
+#include "settings.h"
+#include "bsp/button.h"
+#include "freertos/FreeRTOS.h"
+#include <stdatomic.h>
 #include "esp_log.h"
 #include "iris_ota_support.h"
 #include "iris_screen_mirror.h"
@@ -63,11 +67,21 @@ static void on_alarm(bool ringing, const char *label, void *ctx)
 }
 
 /* Petting (long press): the face reacts itself; add a purr. */
+static uint16_t s_scene;   /* the scene showing (any) */
+
+static void on_call(uint16_t scene_id, uint16_t action, int32_t value, void *ctx)
+{
+    (void)ctx;
+    settings_on_call(scene_id, action, value);
+}
+
 /* Swiping between the eyes, the world-timer and the countdown timer. */
 static void on_scene(uint16_t scene_id, void *ctx)
 {
     (void)ctx;
+    s_scene = scene_id;
     app_clock_scene_changed(scene_id);
+    settings_scene_changed(scene_id);
 }
 
 /* Beeps for the workout timer; Grok starting one also brings its screen up. */
@@ -112,7 +126,63 @@ static void on_show_screen(app_voice_screen_t scr, void *ctx)
     esp_gsp_goto_scene(application.ui, scene, ESP_GSP_CROSS_FADE);
 }
 
-/* Usage warning under the eyes; a worried look when it first appears. */
+/* AI button (GPIO7): press = tap-to-talk, double press = next screen, long
+ * press = stop everything (alarm, timer, workout, Grok). Its callbacks run on the
+ * button timer task, so screen and workout work is handed to the UI task. */
+static atomic_int s_btn_next, s_btn_stop;
+
+static void on_ai_button(void *button, void *user_data)
+{
+    switch ((intptr_t)user_data) {
+    case 0: app_voice_tap(); break;
+    case 1: atomic_store(&s_btn_next, 1); break;
+    default: atomic_store(&s_btn_stop, 1); break;
+    }
+}
+
+static void button_tick(esp_gsp_handle_t ui, void *ctx)
+{
+    (void)ctx;
+    if (atomic_exchange(&s_btn_next, 0) && !settings_close()) {
+        const uint16_t order[] = { s_ids.buddy_scene, s_ids.clock_scene, s_ids.cal_scene, s_ids.weather_scene,
+                                   s_ids.forecast_scene, s_ids.timer_scene, s_ids.workout_scene, s_ids.usage_scene };
+        const int n = (int)(sizeof(order) / sizeof(order[0]));
+        int i = 0;
+        while (i < n && order[i] != s_scene) {
+            ++i;
+        }
+        esp_gsp_goto_scene(ui, order[(i + 1) % n], ESP_GSP_CROSS_FADE);
+    }
+    if (atomic_exchange(&s_btn_stop, 0)) {
+        app_alarm_dismiss();
+        if (app_workout_active()) {
+            app_workout_stop();
+        }
+        app_alarm_timer_t tm;
+        if (app_alarm_timer_get(&tm) && tm.running) {
+            app_alarm_timer_reset();
+        }
+        app_voice_stop();
+        app_voice_beep(APP_VOICE_BEEP_DONE);
+    }
+}
+
+static void start_ai_button(void)
+{
+    button_handle_t btn[BSP_BUTTON_NUM] = { 0 };
+    int n = 0;
+    if (bsp_iot_button_create(btn, &n, BSP_BUTTON_NUM) != ESP_OK || !btn[BSP_BUTTON_AI]) {
+        ESP_LOGW(TAG, "AI button unavailable");
+        return;
+    }
+    iot_button_register_cb(btn[BSP_BUTTON_AI], BUTTON_SINGLE_CLICK, NULL, on_ai_button, (void *)0);
+    iot_button_register_cb(btn[BSP_BUTTON_AI], BUTTON_DOUBLE_CLICK, NULL, on_ai_button, (void *)1);
+    iot_button_register_cb(btn[BSP_BUTTON_AI], BUTTON_LONG_PRESS_START, NULL, on_ai_button, (void *)2);
+    esp_gsp_timer_create(application.ui, 50, button_tick, NULL);
+    ESP_LOGI(TAG, "AI button: press talk, double next screen, hold stop");
+}
+
+/* Usage warning: a worried look when it first appears (no text under the eyes). */
 static void on_usage_note(const char *note)
 {
     static char last[64];
@@ -121,21 +191,13 @@ static void on_usage_note(const char *note)
             app_buddy_express(application.controller, APP_BUDDY_EXPR_SAD);
         }
         snprintf(last, sizeof(last), "%s", note);
-        app_buddy_set_note(application.controller, APP_BUDDY_NOTE_USAGE, note);
     }
-}
-
-/* Next calendar event under the eyes (lowest-priority line). */
-static void on_next_event(const char *note)
-{
-    app_buddy_set_note(application.controller, APP_BUDDY_NOTE_NEXT, note);
 }
 
 /* Night mode 22:00-06:00: dim screen, sleepy face, no wake word, messages
  * held. Not while a workout, timer or alarm is going. Runs on the UI task. */
 #define NIGHT_START_H 22
 #define NIGHT_END_H   6
-#define DAY_BRIGHTNESS   100
 #define NIGHT_BRIGHTNESS 12
 
 static void night_tick(esp_gsp_handle_t ui, void *ctx)
@@ -148,7 +210,7 @@ static void night_tick(esp_gsp_handle_t ui, void *ctx)
         time_t now = time(NULL);
         struct tm lt;
         localtime_r(&now, &lt);
-        night = lt.tm_hour >= NIGHT_START_H || lt.tm_hour < NIGHT_END_H;
+        night = settings_prefs()->night_dim && (lt.tm_hour >= NIGHT_START_H || lt.tm_hour < NIGHT_END_H);
     }
     app_alarm_timer_t tm;
     if (app_workout_active() || app_alarm_ringing() ||
@@ -159,7 +221,7 @@ static void night_tick(esp_gsp_handle_t ui, void *ctx)
     const bool dim = night && app_voice_night_active();
     if (dim != shown) {
         shown = dim;
-        bsp_display_brightness_set(dim ? NIGHT_BRIGHTNESS : DAY_BRIGHTNESS);
+        bsp_display_brightness_set(dim ? NIGHT_BRIGHTNESS : settings_prefs()->brightness);
         app_buddy_set_sleep(application.controller, dim);
         ESP_LOGI(TAG, "night %s", dim ? "dim" : "bright");
     }
@@ -252,11 +314,13 @@ void app_main(void)
     memcpy(clock_ids.cal_rn, ids.cal_rn, sizeof(ids.cal_rn));
     if (app_clock_start(application.ui, &clock_ids) == ESP_OK) {
         app_buddy_set_scene_handler(application.controller, on_scene, NULL);
+        app_buddy_set_call_handler(application.controller, on_call, NULL);
         app_clock_set_usage_note_handler(on_usage_note);
-        app_clock_set_next_event_handler(on_next_event);
     }
     if (voice_err == ESP_OK) {
         app_voice_set_screen_handler(on_show_screen, NULL);
+        start_ai_button();
+        settings_start(application.ui, &s_ids);
         esp_gsp_timer_create(application.ui, 2000, night_tick, NULL);
     }
     heap_mark("ready");

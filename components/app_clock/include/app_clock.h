@@ -43,6 +43,11 @@ void app_clock_set_usage_note_handler(app_clock_usage_note_cb_t cb);
 typedef void (*app_clock_next_cb_t)(const char *note);
 void app_clock_set_next_event_handler(app_clock_next_cb_t cb);
 
+/** The clock screens' touch handling (dial, timer, workout). Its interceptor is
+ * installed by app_clock_start; an app that installs its own (there is only one)
+ * must pass samples on to this. Render task. Returns true when consumed. */
+bool app_clock_input(int32_t x, int32_t y, bool pressed);
+
 /** Seconds the chronograph has been running (0 if stopped/reset). */
 uint32_t app_clock_chrono_seconds(void);
 

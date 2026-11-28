@@ -687,6 +687,11 @@ static void fast_tick(esp_gsp_handle_t ui, void *ctx)
     }
 }
 
+bool app_clock_input(int32_t x, int32_t y, bool pressed)
+{
+    return on_input(NULL, x, y, pressed, NULL);
+}
+
 esp_err_t app_clock_start(esp_gsp_handle_t ui, const app_clock_ids_t *ids)
 {
     c.ui = ui;

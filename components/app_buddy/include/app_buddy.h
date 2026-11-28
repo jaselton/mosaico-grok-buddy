@@ -95,6 +95,11 @@ void app_buddy_set_pet_handler(app_buddy_handle_t handle, app_buddy_tap_cb_t cb,
 typedef void (*app_buddy_scene_cb_t)(uint16_t scene_id, void *ctx);
 void app_buddy_set_scene_handler(app_buddy_handle_t handle, app_buddy_scene_cb_t cb, void *ctx);
 
+/** "call" actions authored on the other scenes (sliders, toggles, buttons):
+ * scene id, the scene's GSP_ACT_ID_* and the value. Render task: keep it short. */
+typedef void (*app_buddy_call_cb_t)(uint16_t scene_id, uint16_t action_id, int32_t value, void *ctx);
+void app_buddy_set_call_handler(app_buddy_handle_t handle, app_buddy_call_cb_t cb, void *ctx);
+
 /** Scene ids and (scene-local) binds of the other screens in the shared UI bundle. */
 typedef struct {
     uint16_t clock_scene, clock_canvas;
@@ -108,6 +113,11 @@ typedef struct {
     uint16_t workout_scene, workout_canvas, workout_title, workout_phase, workout_digits, workout_round, workout_btn;
     uint16_t cal_scene, cal_canvas, cal_date, cal_allday, cal_when, cal_title, cal_sub, cal_upd;
     uint16_t cal_rt[4], cal_rn[4];
+    uint16_t settings_scene, settings_volv, settings_brv, settings_wifi;   /* scene + label binds */
+    uint32_t settings_key_vol, settings_key_br, settings_key_wake, settings_key_dim;   /* component keys */
+    uint16_t settings_act_vol, settings_act_br, settings_act_wake, settings_act_dim, settings_act_done, settings_act_wifi;
+    uint16_t wifi_scene, wifi_stat, wifi_name[6], wifi_sig[6], wifi_act_back, wifi_act_row, wifi_act_scan;
+    uint16_t pass_scene, pass_name, pass_text, pass_act_cancel, pass_act_key;
 } app_buddy_screen_ids_t;
 void app_buddy_screen_ids(app_buddy_screen_ids_t *out);
 

@@ -1,0 +1,287 @@
+{
+  "screen": "settings",
+  "w": 480,
+  "h": 480,
+  "screen_bg": "#0B0F18",
+  "font": "fonts/DejaVuSans-Bold.ttf",
+  "default_font_size": 18,
+  "swipe": false,
+  "objects": [
+    {
+      "type": "rect",
+      "parent": -1,
+      "x": 210,
+      "y": 14,
+      "w": 60,
+      "h": 6,
+      "radius": 3,
+      "bg_color": "#4A5266"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 50,
+      "y": 34,
+      "w": 380,
+      "h": 30,
+      "text": "Settings",
+      "text_align": "center",
+      "overflow": "ellipsis",
+      "font_size": 24,
+      "fg_color": "#FFFFFF",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 50,
+      "y": 82,
+      "w": 250,
+      "h": 26,
+      "text": "Volume",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 19,
+      "fg_color": "#C9D1E0",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 300,
+      "y": 82,
+      "w": 130,
+      "h": 26,
+      "text": "",
+      "text_align": "right",
+      "overflow": "ellipsis",
+      "font_size": 19,
+      "fg_color": "#9AA3B5",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "svolv",
+      "bind": "svolv"
+    },
+    {
+      "type": "slider",
+      "parent": -1,
+      "name": "svol",
+      "x": 50,
+      "y": 110,
+      "w": 380,
+      "h": 40,
+      "min": 0,
+      "max": 100,
+      "value": 82,
+      "track_size": 12,
+      "radius": 20,
+      "bg_color": "#2A3142",
+      "fg_color": "#5C9CFF",
+      "knob_color": "#F8FAFC",
+      "callback": "svol",
+      "events": [
+        {
+          "event": "value",
+          "action": "call",
+          "arg": 0
+        },
+        {
+          "event": "release",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 50,
+      "y": 166,
+      "w": 250,
+      "h": 26,
+      "text": "Brightness",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 19,
+      "fg_color": "#C9D1E0",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 300,
+      "y": 166,
+      "w": 130,
+      "h": 26,
+      "text": "",
+      "text_align": "right",
+      "overflow": "ellipsis",
+      "font_size": 19,
+      "fg_color": "#9AA3B5",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "sbrv",
+      "bind": "sbrv"
+    },
+    {
+      "type": "slider",
+      "parent": -1,
+      "name": "sbr",
+      "x": 50,
+      "y": 194,
+      "w": 380,
+      "h": 40,
+      "min": 10,
+      "max": 100,
+      "value": 100,
+      "track_size": 12,
+      "radius": 20,
+      "bg_color": "#2A3142",
+      "fg_color": "#E8C170",
+      "knob_color": "#F8FAFC",
+      "callback": "sbr",
+      "events": [
+        {
+          "event": "value",
+          "action": "call",
+          "arg": 0
+        },
+        {
+          "event": "release",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 50,
+      "y": 262,
+      "w": 290,
+      "h": 26,
+      "text": "Hey Grok wake word",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 19,
+      "fg_color": "#C9D1E0",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    },
+    {
+      "type": "toggle",
+      "parent": -1,
+      "name": "swake",
+      "x": 350,
+      "y": 256,
+      "w": 80,
+      "h": 40,
+      "checked": true,
+      "track_size": 36,
+      "bg_color": "#2A3142",
+      "fg_color": "#3FBF7F",
+      "knob_color": "#F8FAFC",
+      "callback": "swake",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 50,
+      "y": 318,
+      "w": 290,
+      "h": 26,
+      "text": "Dim at night (10p-6a)",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 19,
+      "fg_color": "#C9D1E0",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    },
+    {
+      "type": "toggle",
+      "parent": -1,
+      "name": "sdim",
+      "x": 350,
+      "y": 312,
+      "w": 80,
+      "h": 40,
+      "checked": true,
+      "track_size": 36,
+      "bg_color": "#2A3142",
+      "fg_color": "#3FBF7F",
+      "knob_color": "#F8FAFC",
+      "callback": "sdim",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 40,
+      "y": 360,
+      "w": 400,
+      "h": 22,
+      "text": "",
+      "text_align": "center",
+      "overflow": "ellipsis",
+      "font_size": 15,
+      "fg_color": "#7D879B",
+      "font_charset": " 0123456789:/+-.,'%()\u00b7ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "swifi",
+      "bind": "swifi"
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 250,
+      "y": 392,
+      "w": 150,
+      "h": 44,
+      "text": "Done",
+      "font_size": 19,
+      "radius": 22,
+      "bg_color": "#2A3142",
+      "fg_color": "#FFFFFF",
+      "name": "sdone",
+      "callback": "sdone",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 80,
+      "y": 392,
+      "w": 150,
+      "h": 44,
+      "text": "Wi-Fi",
+      "radius": 22,
+      "bg_color": "#1D3A57",
+      "fg_color": "#FFFFFF",
+      "name": "swifib",
+      "callback": "swifib",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        }
+      ],
+      "font_size": 19
+    }
+  ]
+}

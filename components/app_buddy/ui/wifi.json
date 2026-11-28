@@ -1,0 +1,463 @@
+{
+  "screen": "wifi",
+  "w": 480,
+  "h": 480,
+  "screen_bg": "#0B0F18",
+  "font": "fonts/DejaVuSans-Bold.ttf",
+  "default_font_size": 18,
+  "swipe": false,
+  "objects": [
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 50,
+      "y": 22,
+      "w": 380,
+      "h": 30,
+      "text": "Wi-Fi",
+      "text_align": "center",
+      "overflow": "ellipsis",
+      "font_size": 24,
+      "fg_color": "#FFFFFF",
+      "font_charset": " 0123456789:/+-.,'%()·ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 30,
+      "y": 56,
+      "w": 420,
+      "h": 22,
+      "text": "",
+      "text_align": "center",
+      "overflow": "ellipsis",
+      "font_size": 15,
+      "fg_color": "#9AA3B5",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~·›",
+      "name": "wstat",
+      "bind": "wstat"
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 30,
+      "y": 88,
+      "w": 420,
+      "h": 42,
+      "radius": 10,
+      "bg_color": "#161C28"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 46,
+      "y": 97,
+      "w": 290,
+      "h": 26,
+      "text": "",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 18,
+      "fg_color": "#FFFFFF",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~·›",
+      "name": "wn0",
+      "bind": "wn0"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 330,
+      "y": 99,
+      "w": 106,
+      "h": 22,
+      "text": "",
+      "text_align": "right",
+      "overflow": "ellipsis",
+      "font_size": 14,
+      "fg_color": "#7D879B",
+      "font_charset": " 0123456789:/+-.,'%()·ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "ws0",
+      "bind": "ws0"
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 30,
+      "y": 88,
+      "w": 420,
+      "h": 42,
+      "text": "",
+      "radius": 10,
+      "bg_color": "#00000000",
+      "fg_color": "#FFFFFF",
+      "name": "wrow0",
+      "callback": "wrow",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 30,
+      "y": 136,
+      "w": 420,
+      "h": 42,
+      "radius": 10,
+      "bg_color": "#161C28"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 46,
+      "y": 145,
+      "w": 290,
+      "h": 26,
+      "text": "",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 18,
+      "fg_color": "#FFFFFF",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~·›",
+      "name": "wn1",
+      "bind": "wn1"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 330,
+      "y": 147,
+      "w": 106,
+      "h": 22,
+      "text": "",
+      "text_align": "right",
+      "overflow": "ellipsis",
+      "font_size": 14,
+      "fg_color": "#7D879B",
+      "font_charset": " 0123456789:/+-.,'%()·ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "ws1",
+      "bind": "ws1"
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 30,
+      "y": 136,
+      "w": 420,
+      "h": 42,
+      "text": "",
+      "radius": 10,
+      "bg_color": "#00000000",
+      "fg_color": "#FFFFFF",
+      "name": "wrow1",
+      "callback": "wrow",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 1
+        }
+      ]
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 30,
+      "y": 184,
+      "w": 420,
+      "h": 42,
+      "radius": 10,
+      "bg_color": "#161C28"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 46,
+      "y": 193,
+      "w": 290,
+      "h": 26,
+      "text": "",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 18,
+      "fg_color": "#FFFFFF",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~·›",
+      "name": "wn2",
+      "bind": "wn2"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 330,
+      "y": 195,
+      "w": 106,
+      "h": 22,
+      "text": "",
+      "text_align": "right",
+      "overflow": "ellipsis",
+      "font_size": 14,
+      "fg_color": "#7D879B",
+      "font_charset": " 0123456789:/+-.,'%()·ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "ws2",
+      "bind": "ws2"
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 30,
+      "y": 184,
+      "w": 420,
+      "h": 42,
+      "text": "",
+      "radius": 10,
+      "bg_color": "#00000000",
+      "fg_color": "#FFFFFF",
+      "name": "wrow2",
+      "callback": "wrow",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 2
+        }
+      ]
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 30,
+      "y": 232,
+      "w": 420,
+      "h": 42,
+      "radius": 10,
+      "bg_color": "#161C28"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 46,
+      "y": 241,
+      "w": 290,
+      "h": 26,
+      "text": "",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 18,
+      "fg_color": "#FFFFFF",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~·›",
+      "name": "wn3",
+      "bind": "wn3"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 330,
+      "y": 243,
+      "w": 106,
+      "h": 22,
+      "text": "",
+      "text_align": "right",
+      "overflow": "ellipsis",
+      "font_size": 14,
+      "fg_color": "#7D879B",
+      "font_charset": " 0123456789:/+-.,'%()·ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "ws3",
+      "bind": "ws3"
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 30,
+      "y": 232,
+      "w": 420,
+      "h": 42,
+      "text": "",
+      "radius": 10,
+      "bg_color": "#00000000",
+      "fg_color": "#FFFFFF",
+      "name": "wrow3",
+      "callback": "wrow",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 3
+        }
+      ]
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 30,
+      "y": 280,
+      "w": 420,
+      "h": 42,
+      "radius": 10,
+      "bg_color": "#161C28"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 46,
+      "y": 289,
+      "w": 290,
+      "h": 26,
+      "text": "",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 18,
+      "fg_color": "#FFFFFF",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~·›",
+      "name": "wn4",
+      "bind": "wn4"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 330,
+      "y": 291,
+      "w": 106,
+      "h": 22,
+      "text": "",
+      "text_align": "right",
+      "overflow": "ellipsis",
+      "font_size": 14,
+      "fg_color": "#7D879B",
+      "font_charset": " 0123456789:/+-.,'%()·ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "ws4",
+      "bind": "ws4"
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 30,
+      "y": 280,
+      "w": 420,
+      "h": 42,
+      "text": "",
+      "radius": 10,
+      "bg_color": "#00000000",
+      "fg_color": "#FFFFFF",
+      "name": "wrow4",
+      "callback": "wrow",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 4
+        }
+      ]
+    },
+    {
+      "type": "container",
+      "parent": -1,
+      "x": 30,
+      "y": 328,
+      "w": 420,
+      "h": 42,
+      "radius": 10,
+      "bg_color": "#161C28"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 46,
+      "y": 337,
+      "w": 290,
+      "h": 26,
+      "text": "",
+      "text_align": "left",
+      "overflow": "ellipsis",
+      "font_size": 18,
+      "fg_color": "#FFFFFF",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~·›",
+      "name": "wn5",
+      "bind": "wn5"
+    },
+    {
+      "type": "label",
+      "parent": -1,
+      "x": 330,
+      "y": 339,
+      "w": 106,
+      "h": 22,
+      "text": "",
+      "text_align": "right",
+      "overflow": "ellipsis",
+      "font_size": 14,
+      "fg_color": "#7D879B",
+      "font_charset": " 0123456789:/+-.,'%()·ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "name": "ws5",
+      "bind": "ws5"
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 30,
+      "y": 328,
+      "w": 420,
+      "h": 42,
+      "text": "",
+      "radius": 10,
+      "bg_color": "#00000000",
+      "fg_color": "#FFFFFF",
+      "name": "wrow5",
+      "callback": "wrow",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 5
+        }
+      ]
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 80,
+      "y": 392,
+      "w": 150,
+      "h": 44,
+      "text": "Back",
+      "font_size": 18,
+      "radius": 22,
+      "bg_color": "#2A3142",
+      "fg_color": "#FFFFFF",
+      "name": "wback",
+      "callback": "wback",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    },
+    {
+      "type": "button",
+      "parent": -1,
+      "x": 250,
+      "y": 392,
+      "w": 150,
+      "h": 44,
+      "text": "Rescan",
+      "font_size": 18,
+      "radius": 22,
+      "bg_color": "#2A3142",
+      "fg_color": "#FFFFFF",
+      "name": "wscan",
+      "callback": "wscan",
+      "events": [
+        {
+          "event": "click",
+          "action": "call",
+          "arg": 0
+        }
+      ]
+    }
+  ]
+}

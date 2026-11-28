@@ -24,6 +24,9 @@
 #define GSP_BUNDLE_SCENE_WEATHER GSP_BRIDGE_BUNDLE_SCENE_WEATHER
 #define GSP_BUNDLE_SCENE_FORECAST GSP_BRIDGE_BUNDLE_SCENE_FORECAST
 #define GSP_BUNDLE_SCENE_CALENDAR GSP_BRIDGE_BUNDLE_SCENE_CALENDAR
+#define GSP_BUNDLE_SCENE_SETTINGS GSP_BRIDGE_BUNDLE_SCENE_SETTINGS
+#define GSP_BUNDLE_SCENE_WIFI GSP_BRIDGE_BUNDLE_SCENE_WIFI
+#define GSP_BUNDLE_SCENE_WIFIPASS GSP_BRIDGE_BUNDLE_SCENE_WIFIPASS
 #endif
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
@@ -158,6 +161,8 @@ struct app_buddy {
     void *pet_ctx;
     app_buddy_scene_cb_t scene_cb;
     void *scene_ctx;
+    app_buddy_call_cb_t call_cb;    /* callback actions from the other scenes */
+    void *call_ctx;
     uint16_t scene;   /* scene currently showing */
     uint32_t ignore_tap_until_ms;    /* a long press is followed by its release click */
     /* Reactions, sleep and tilt (cross-task inputs, consumed on the render task). */
@@ -667,6 +672,12 @@ static void on_event(esp_gsp_handle_t ui, const esp_gsp_event_t *event, void *ct
         }
         return;
     }
+    if (event->type == ESP_GSP_EVENT_CALL && event->scene_id != GSP_BUNDLE_SCENE_BUDDY) {
+        if (s->call_cb) {
+            s->call_cb(event->scene_id, event->action_id, (int32_t)event->arg, s->call_ctx);
+        }
+        return;
+    }
     if (!gsp_buddy_event_is_tap(event)) {
         return;
     }
@@ -764,6 +775,14 @@ void app_buddy_set_pet_handler(app_buddy_handle_t handle, app_buddy_tap_cb_t cb,
     }
 }
 
+void app_buddy_set_call_handler(app_buddy_handle_t handle, app_buddy_call_cb_t cb, void *ctx)
+{
+    if (handle) {
+        handle->call_ctx = ctx;
+        handle->call_cb = cb;
+    }
+}
+
 void app_buddy_set_scene_handler(app_buddy_handle_t handle, app_buddy_scene_cb_t cb, void *ctx)
 {
     if (handle) {
@@ -823,6 +842,36 @@ void app_buddy_screen_ids(app_buddy_screen_ids_t *out)
     out->workout_digits = GSP_WORKOUT_BIND_WDIGITS;
     out->workout_round = GSP_WORKOUT_BIND_WROUND;
     out->workout_btn = GSP_WORKOUT_BIND_WBTN;
+    out->settings_scene = GSP_BUNDLE_SCENE_SETTINGS;
+    out->settings_volv = GSP_SETTINGS_BIND_SVOLV;
+    out->settings_brv = GSP_SETTINGS_BIND_SBRV;
+    out->settings_wifi = GSP_SETTINGS_BIND_SWIFI;
+    out->settings_key_vol = GSP_SETTINGS_OBJ_KEY_SVOL;
+    out->settings_key_br = GSP_SETTINGS_OBJ_KEY_SBR;
+    out->settings_key_wake = GSP_SETTINGS_OBJ_KEY_SWAKE;
+    out->settings_key_dim = GSP_SETTINGS_OBJ_KEY_SDIM;
+    out->settings_act_vol = GSP_SETTINGS_ACT_ID_SVOL;
+    out->settings_act_br = GSP_SETTINGS_ACT_ID_SBR;
+    out->settings_act_wake = GSP_SETTINGS_ACT_ID_SWAKE;
+    out->settings_act_dim = GSP_SETTINGS_ACT_ID_SDIM;
+    out->settings_act_done = GSP_SETTINGS_ACT_ID_SDONE;
+    out->settings_act_wifi = GSP_SETTINGS_ACT_ID_SWIFIB;
+    out->wifi_scene = GSP_BUNDLE_SCENE_WIFI;
+    out->wifi_stat = GSP_WIFI_BIND_WSTAT;
+    const uint16_t wn[6] = { GSP_WIFI_BIND_WN0, GSP_WIFI_BIND_WN1, GSP_WIFI_BIND_WN2,
+                             GSP_WIFI_BIND_WN3, GSP_WIFI_BIND_WN4, GSP_WIFI_BIND_WN5 };
+    const uint16_t ws[6] = { GSP_WIFI_BIND_WS0, GSP_WIFI_BIND_WS1, GSP_WIFI_BIND_WS2,
+                             GSP_WIFI_BIND_WS3, GSP_WIFI_BIND_WS4, GSP_WIFI_BIND_WS5 };
+    memcpy(out->wifi_name, wn, sizeof(wn));
+    memcpy(out->wifi_sig, ws, sizeof(ws));
+    out->wifi_act_back = GSP_WIFI_ACT_ID_WBACK;
+    out->wifi_act_row = GSP_WIFI_ACT_ID_WROW;
+    out->wifi_act_scan = GSP_WIFI_ACT_ID_WSCAN;
+    out->pass_scene = GSP_BUNDLE_SCENE_WIFIPASS;
+    out->pass_name = GSP_WIFIPASS_BIND_PNAME;
+    out->pass_text = GSP_WIFIPASS_BIND_PPASS;
+    out->pass_act_cancel = GSP_WIFIPASS_ACT_ID_PCANCEL;
+    out->pass_act_key = GSP_WIFIPASS_ACT_ID_PKB_KEY;
     out->cal_scene = GSP_BUNDLE_SCENE_CALENDAR;
     out->cal_canvas = GSP_CALENDAR_BIND_KFACE;
     out->cal_date = GSP_CALENDAR_BIND_KDATE;
